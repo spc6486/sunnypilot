@@ -334,7 +334,7 @@ class CAR(Platforms):
     [ToyotaCarDocs("Lexus IS 2017-19")],
     CarSpecs(mass=3736.8 * CV.LB_TO_KG, wheelbase=2.79908, steerRatio=13.3, tireStiffnessFactor=0.444),
     # dbc_dict('toyota_tnga_k_pt_generated', 'toyota_adas'),
-    dbc_dict('toyota_tnga_k_pt', 'toyota_adas'),
+    dbc_dict('toyota_tnga_k_pt_20251007', 'toyota_adas'),
     flags=ToyotaFlags.UNSUPPORTED_DSU,
   )
   LEXUS_IS_TSS2 = ToyotaTSS2PlatformConfig(
