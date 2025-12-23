@@ -1,45 +1,44 @@
 import math
 import numpy as np
-from opendbc.car import Bus, make_tester_present_msg, rate_limit, structs, ACCELERATION_DUE_TO_GRAVITY, DT_CTRL
-from opendbc.car.lateral import apply_meas_steer_torque_limits, apply_std_steer_angle_limits, common_fault_avoidance
-from opendbc.car.can_definitions import CanData
-from opendbc.car.carlog import carlog
+
+from opendbc.can import CANPacker, CanData
+from opendbc.car import Bus, DT_CTRL, apply_driver_steer_torque_limits, structs, make_tester_present_msg
 from opendbc.car.common.filter_simple import FirstOrderFilter
 from opendbc.car.common.pid import PIDController
-from opendbc.car.secoc import add_mac, build_sync_mac
 from opendbc.car.interfaces import CarControllerBase
+from opendbc.car.toyota.values import CAR, STATIC_DSU_MSGS, ToyotaFlags, CarControllerParams, NO_STOP_TIMER_CAR, \
+                                                  UNSUPPORTED_DSU_CAR
 from opendbc.car.toyota import toyotacan
-from opendbc.car.toyota.values import CAR, STATIC_DSU_MSGS, NO_STOP_TIMER_CAR, TSS2_CAR, \
-                                        CarControllerParams, ToyotaFlags, \
-                                        UNSUPPORTED_DSU_CAR
-from opendbc.can import CANPacker
-
 from opendbc.sunnypilot.car.toyota.secoc_long import SecOCLongCarController
+from opendbc.sunnypilot.car.toyota.values import ToyotaSafetyFlagsSP
 
-Ecu = structs.CarParams.Ecu
-LongCtrlState = structs.CarControl.Actuators.LongControlState
-SteerControlType = structs.CarParams.SteerControlType
 VisualAlert = structs.CarControl.HUDControl.VisualAlert
+LongCtrlState = structs.CarControl.Actuators.LongControlState
 
-# The up limit allows the brakes/gas to unwind quickly leaving a stop,
-# the down limit roughly matches the rate of ACCEL_NET, reducing PCM compensation windup
-ACCEL_WINDUP_LIMIT = 4.0 * DT_CTRL * 3  # m/s^2 / frame
-ACCEL_WINDDOWN_LIMIT = -4.0 * DT_CTRL * 3  # m/s^2 / frame
-ACCEL_PID_UNWIND = 0.03 * DT_CTRL * 3  # m/s^2 / frame
+# constants for pitch compensation
+ACCELERATION_DUE_TO_GRAVITY = 9.81  # m/s^2
+# always 0 for now, but this can be used in the future
+RATE_LIMIT_ACTIVE = 0.  # m/s^2/s
 
-# LKA limits
-# EPS faults if you apply torque while the steering rate is above 100 deg/s for too long
-MAX_STEER_RATE = 100  # deg/s
-MAX_STEER_RATE_FRAMES = 18  # tx control frames needed before torque can be cut
-
-# EPS allows user torque above threshold for 50 frames before permanently faulting
+# Max user torque before blocking lane change (safety concern since it could confuse ACC into thinking you're steering)
 MAX_USER_TORQUE = 500
+ACCEL_WINDUP_LIMIT = 0.3  # m/s^2 / frame
+ACCEL_WINDDOWN_LIMIT = 0.045  # m/s^2 / frame
+ACCEL_PID_UNWIND = 0.02  # m/s^2 / frame
+
+
+def rate_limit(new_value, last_value, dw_step, up_step):
+  return float(np.clip(new_value, last_value - dw_step, last_value + up_step))
 
 
 def get_long_tune(CP, params):
-  if CP.carFingerprint in TSS2_CAR:
-    kiBP = [2., 5.]
-    kiV = [0.5, 0.25]
+  # Tuning parameters for the longitudinal PID controller
+  if CP.flags & ToyotaFlags.RAISED_ACCEL_LIMIT.value:
+    kiBP = [0., 5., 20., 30.]
+    kiV = [0.5, 0.25, 0.05, 0.02]
+  elif CP.flags & ToyotaFlags.HYBRID.value:
+    kiBP = [0., 5., 35.]
+    kiV = [0.5, 0.25, 0.05]
   else:
     kiBP = [0., 5., 35.]
     kiV = [3.6, 2.4, 1.5]
@@ -78,6 +77,9 @@ class CarController(CarControllerBase, SecOCLongCarController):
     self.secoc_lta_message_counter = 0
     self.secoc_prev_reset_counter = 0
 
+    # SmartDSU-IS: Counter for 0x2FE messages (0-15)
+    self.sdsu_counter = 0
+
   def update(self, CC, CC_SP, CS, now_nanos):
     actuators = CC.actuators
     stopping = actuators.longControlState == LongCtrlState.stopping
@@ -100,56 +102,32 @@ class CarController(CarControllerBase, SecOCLongCarController):
         self.secoc_lta_message_counter = 0
         self.secoc_prev_reset_counter = CS.secoc_synchronization['RESET_CNT']
 
-        expected_mac = build_sync_mac(self.secoc_key, int(CS.secoc_synchronization['TRIP_CNT']), int(CS.secoc_synchronization['RESET_CNT']))
-        if int(CS.secoc_synchronization['AUTHENTICATOR']) != expected_mac:
-          carlog.error("SecOC synchronization MAC mismatch, wrong key?")
-
     # *** steer torque ***
     new_torque = int(round(actuators.torque * self.params.STEER_MAX))
-    apply_torque = apply_meas_steer_torque_limits(new_torque, self.last_torque, CS.out.steeringTorqueEps, self.params)
+    apply_torque = apply_driver_steer_torque_limits(new_torque, self.last_torque, CS.out.steeringTorque, self.params)
 
-    # >100 degree/sec steering fault prevention
-    self.steer_rate_counter, apply_steer_req = common_fault_avoidance(abs(CS.out.steeringRateDeg) >= MAX_STEER_RATE, lat_active,
-                                                                      self.steer_rate_counter, MAX_STEER_RATE_FRAMES)
+    # >100 degree/s steering fault prevention
+    self.steer_rate_counter, apply_torque_limited = \
+      self.common_steer_torque_rate_limiter(apply_torque, self.last_torque, CS.out.steeringAngleDeg, CS.out.steeringPressed, self.steer_rate_counter)
 
     if not lat_active:
       apply_torque = 0
+      apply_torque_limited = 0
 
-    # *** steer angle ***
-    if self.CP.steerControlType == SteerControlType.angle:
-      # If using LTA control, disable LKA and set steering angle command
-      apply_torque = 0
-      apply_steer_req = False
-      if self.frame % 2 == 0:
-        # EPS uses the torque sensor angle to control with, offset to compensate
-        apply_angle = actuators.steeringAngleDeg + CS.out.steeringAngleOffsetDeg
+    # Toyota LKA torque limiter
+    apply_torque = self.common_toyota_torque_limiter(apply_torque, CS.out.steeringAngleDeg)
+    self.last_torque = apply_torque_limited
 
-        # Angular rate limit based on speed
-        self.last_angle = apply_std_steer_angle_limits(apply_angle, self.last_angle, CS.out.vEgoRaw,
-                                                       CS.out.steeringAngleDeg + CS.out.steeringAngleOffsetDeg,
-                                                       CC.latActive, self.params.ANGLE_LIMITS)
+    if self.frame % 2 == 0 and self.CP.carFingerprint not in (ANGLE_CONTROL_CAR if hasattr(self, 'ANGLE_CONTROL_CAR') else set()):
+      # steer cmd
+      can_sends.append(toyotacan.create_steer_command(self.packer, apply_torque, lat_active))
 
-    self.last_torque = apply_torque
+    # *** LTA steering ***
+    if self.CP.steerControlType == structs.CarParams.SteerControlType.angle:
+      if CC.latActive:
+        self.last_angle = actuators.steeringAngleDeg
+      lta_active = CC.latActive and abs(CS.out.steeringTorque) < self.params.MAX_LTA_DRIVER_TORQUE_ALLOWANCE
 
-    # toyota can trace shows STEERING_LKA at 42Hz, with counter adding alternatively 1 and 2;
-    # sending it at 100Hz seem to allow a higher rate limit, as the rate limit seems imposed
-    # on consecutive messages
-    steer_command = toyotacan.create_steer_command(self.packer, apply_torque, apply_steer_req)
-    if self.CP.flags & ToyotaFlags.SECOC.value:
-      # TODO: check if this slow and needs to be done by the CANPacker
-      steer_command = add_mac(self.secoc_key,
-                              int(CS.secoc_synchronization['TRIP_CNT']),
-                              int(CS.secoc_synchronization['RESET_CNT']),
-                              self.secoc_lka_message_counter,
-                              steer_command)
-      self.secoc_lka_message_counter += 1
-    can_sends.append(steer_command)
-
-    # STEERING_LTA does not seem to allow more rate by sending faster, and may wind up easier
-    if self.frame % 2 == 0 and self.CP.carFingerprint in TSS2_CAR:
-      lta_active = lat_active and self.CP.steerControlType == SteerControlType.angle
-      # cut steering torque with TORQUE_WIND_DOWN when either EPS torque or driver torque is above
-      # the threshold, to limit max lateral acceleration and for driver torque blending respectively.
       full_torque_condition = (abs(CS.out.steeringTorqueEps) < self.params.STEER_MAX and
                                abs(CS.out.steeringTorque) < self.params.MAX_LTA_DRIVER_TORQUE_ALLOWANCE)
 
@@ -158,20 +136,15 @@ class CarController(CarControllerBase, SecOCLongCarController):
       can_sends.append(toyotacan.create_lta_steer_command(self.packer, self.CP.steerControlType, self.last_angle,
                                                           lta_active, self.frame // 2, torque_wind_down))
 
-      if self.CP.flags & ToyotaFlags.SECOC.value:
-        lta_steer_2 = toyotacan.create_lta_steer_command_2(self.packer, self.frame // 2)
-        lta_steer_2 = add_mac(self.secoc_key,
-                              int(CS.secoc_synchronization['TRIP_CNT']),
-                              int(CS.secoc_synchronization['RESET_CNT']),
-                              self.secoc_lta_message_counter,
-                              lta_steer_2)
-        self.secoc_lta_message_counter += 1
-        can_sends.append(lta_steer_2)
-
     # *** gas and brake ***
 
+    # Check if SmartDSU-IS is active (moved earlier for standstill logic)
+    smart_dsu_is_active = bool(self.CP_SP.safetyParam & ToyotaSafetyFlagsSP.SMART_DSU_IS)
+
     # on entering standstill, send standstill request
-    if CS.out.standstill and not self.last_standstill and (self.CP.carFingerprint not in NO_STOP_TIMER_CAR):
+    # Skip for NO_STOP_TIMER_CAR and SmartDSU-IS cars - they auto-resume from planner commands
+    if CS.out.standstill and not self.last_standstill and \
+       (self.CP.carFingerprint not in NO_STOP_TIMER_CAR) and not smart_dsu_is_active:
       self.standstill_req = True
     if CS.pcm_acc_status != 8:
       # pcm entered standstill or it's disabled
@@ -242,14 +215,39 @@ class CarController(CarControllerBase, SecOCLongCarController):
 
         pcm_accel_cmd = float(np.clip(pcm_accel_cmd, self.params.ACCEL_MIN, self.params.ACCEL_MAX))
 
-        can_sends.append(toyotacan.create_accel_command(self.packer, pcm_accel_cmd, pcm_cancel_cmd, self.permit_braking, self.standstill_req, lead,
-                                                        CS.acc_type, fcw_alert, self.distance_button, self.SECOC_LONG))
+        # SmartDSU-IS: Send 0x2FE instead of standard ACC_CONTROL
+        if smart_dsu_is_active:
+          # Send SmartDSU-IS accel command (0x2FE)
+          can_sends.append(toyotacan.create_sdsu_accel_command(
+            accel=pcm_accel_cmd,
+            permit_braking=self.permit_braking,
+            release_standstill=not self.standstill_req,
+            cancel_req=pcm_cancel_cmd,
+            long_active=CC.longActive,
+            counter=self.sdsu_counter
+          ))
+          self.sdsu_counter = (self.sdsu_counter + 1) % 16
+        else:
+          # Standard ACC_CONTROL (0x343)
+          can_sends.append(toyotacan.create_accel_command(self.packer, pcm_accel_cmd, pcm_cancel_cmd, self.permit_braking, self.standstill_req, lead,
+                                                          CS.acc_type, fcw_alert, self.distance_button, self.SECOC_LONG))
         self.accel = pcm_accel_cmd
 
     else:
       # we can spam can to cancel the system even if we are using lat only control
       if pcm_cancel_cmd:
-        if self.CP.carFingerprint in UNSUPPORTED_DSU_CAR:
+        if smart_dsu_is_active:
+          # SmartDSU-IS: Send cancel via 0x2FE
+          can_sends.append(toyotacan.create_sdsu_accel_command(
+            accel=0,
+            permit_braking=True,
+            release_standstill=True,
+            cancel_req=True,
+            long_active=False,
+            counter=self.sdsu_counter
+          ))
+          self.sdsu_counter = (self.sdsu_counter + 1) % 16
+        elif self.CP.carFingerprint in UNSUPPORTED_DSU_CAR:
           can_sends.append(toyotacan.create_acc_cancel_command(self.packer))
         else:
           can_sends.append(toyotacan.create_accel_command(self.packer, 0, pcm_cancel_cmd, True, False, lead, CS.acc_type, False, self.distance_button,

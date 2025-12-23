@@ -7,7 +7,7 @@ from opendbc.car.toyota.values import Ecu, CAR, DBC, ToyotaFlags, CarControllerP
                                                   ToyotaSafetyFlags
 from opendbc.car.disable_ecu import disable_ecu
 from opendbc.car.interfaces import CarInterfaceBase
-from opendbc.sunnypilot.car.toyota.values import ToyotaSafetyFlagsSP
+from opendbc.sunnypilot.car.toyota.values import ToyotaSafetyFlagsSP, SDSU_PRESENCE_MSG
 
 SteerControlType = structs.CarParams.SteerControlType
 
@@ -58,43 +58,23 @@ class CarInterface(CarInterfaceBase):
     if Ecu.hybrid in found_ecus:
       ret.flags |= ToyotaFlags.HYBRID.value
 
-    if candidate == CAR.TOYOTA_PRIUS:
+    if candidate in (TSS2_CAR - RADAR_ACC_CAR):
+      ret.flags |= ToyotaFlags.SMART_DSU.value
+
+    # SmartDSU-IS detection: Check for 0x2FF presence message in fingerprint
+    # This indicates SmartDSU-IS hardware is present and broadcasting
+    smart_dsu_is_detected = SDSU_PRESENCE_MSG in fingerprint[0]
+
+    # Enable stop-and-go for UNSUPPORTED_DSU cars with SmartDSU-IS hardware
+    if smart_dsu_is_detected and candidate in UNSUPPORTED_DSU_CAR:
+      # SmartDSU-IS enables full longitudinal control including stop-and-go
+      ret.openpilotLongitudinalControl = True
+      ret.pcmCruise = False
       stop_and_go = True
-      # Only give steer angle deadzone to for bad angle sensor prius
-      for fw in car_fw:
-        if fw.ecu == "eps" and not fw.fwVersion == b'8965B47060\x00\x00\x00\x00\x00\x00':
-          ret.steerActuatorDelay = 0.25
-          CarInterfaceBase.configure_torque_tune(candidate, ret.lateralTuning, steering_angle_deadzone_deg=0.2)
 
-    elif candidate in (CAR.LEXUS_RX, CAR.LEXUS_RX_TSS2):
-      stop_and_go = True
-      ret.wheelSpeedFactor = 1.035
-
-    elif candidate in (CAR.TOYOTA_AVALON, CAR.TOYOTA_AVALON_2019, CAR.TOYOTA_AVALON_TSS2):
-      # starting from 2019, all Avalon variants have stop and go
-      # https://engage.toyota.com/static/images/toyota_safety_sense/TSS_Applicability_Chart.pdf
-      stop_and_go = candidate != CAR.TOYOTA_AVALON
-
-    elif candidate in (CAR.TOYOTA_RAV4_TSS2, CAR.TOYOTA_RAV4_TSS2_2022, CAR.TOYOTA_RAV4_TSS2_2023, CAR.TOYOTA_RAV4_PRIME, CAR.TOYOTA_SIENNA_4TH_GEN):
-      ret.lateralTuning.init('pid')
-      ret.lateralTuning.pid.kiBP = [0.0]
-      ret.lateralTuning.pid.kpBP = [0.0]
-      ret.lateralTuning.pid.kpV = [0.6]
-      ret.lateralTuning.pid.kiV = [0.1]
-      ret.lateralTuning.pid.kf = 0.00007818594
-
-      # 2019+ RAV4 TSS2 uses two different steering racks and specific tuning seems to be necessary.
-      # See https://github.com/commaai/openpilot/pull/21429#issuecomment-873652891
-      for fw in car_fw:
-        if fw.ecu == "eps" and (fw.fwVersion.startswith(b'\x02') or fw.fwVersion in [b'8965B42181\x00\x00\x00\x00\x00\x00']):
-          ret.lateralTuning.pid.kpV = [0.15]
-          ret.lateralTuning.pid.kiV = [0.05]
-          ret.lateralTuning.pid.kf = 0.00004
-          break
-
-    elif candidate in (CAR.TOYOTA_CHR, CAR.TOYOTA_CAMRY, CAR.TOYOTA_SIENNA, CAR.LEXUS_CTH, CAR.LEXUS_NX):
-      # TODO: Some of these platforms are not advertised to have full range ACC, are they similar to SNG_WITHOUT_DSU cars?
-      stop_and_go = True
+      # CRITICAL: Keep STOCK_LONGITUDINAL set to avoid relay check on 0x343
+      # SmartDSU-IS uses 0x2FE instead, which has check_relay=false
+      ret.safetyConfigs[0].safetyParam |= ToyotaSafetyFlags.STOCK_LONGITUDINAL.value
 
     # TODO: these models can do stop and go, but unclear if it requires sDSU or unplugging DSU.
     #  For now, don't list stop and go functionality in the docs
@@ -122,14 +102,18 @@ class CarInterface(CarInterfaceBase):
     # openpilot longitudinal enabled by default:
     #  - cars w/ DSU disconnected
     #  - TSS2 cars with camera sending ACC_CONTROL where we can block it
+    #  - UNSUPPORTED_DSU cars with SmartDSU-IS hardware (already set above)
     # openpilot longitudinal behind experimental long toggle:
     #  - TSS2 radar ACC cars (disables radar)
 
-    ret.openpilotLongitudinalControl = ret.enableDsu or \
-      candidate in (TSS2_CAR - RADAR_ACC_CAR) or \
-      bool(ret.flags & ToyotaFlags.DISABLE_RADAR.value)
+    if not smart_dsu_is_detected:  # Don't override if SmartDSU-IS already enabled it
+      ret.openpilotLongitudinalControl = ret.enableDsu or \
+        candidate in (TSS2_CAR - RADAR_ACC_CAR) or \
+        bool(ret.flags & ToyotaFlags.DISABLE_RADAR.value)
 
-    ret.autoResumeSng = ret.openpilotLongitudinalControl and candidate in NO_STOP_TIMER_CAR
+    # Auto resume from stop: enabled for NO_STOP_TIMER_CAR or SmartDSU-IS cars
+    # SmartDSU-IS bypasses DSU's low-speed lockout, PCM honors FORCE at all speeds
+    ret.autoResumeSng = ret.openpilotLongitudinalControl and (candidate in NO_STOP_TIMER_CAR or smart_dsu_is_detected)
 
     if not ret.openpilotLongitudinalControl:
       ret.safetyConfigs[0].safetyParam |= ToyotaSafetyFlags.STOCK_LONGITUDINAL.value
@@ -138,8 +122,10 @@ class CarInterface(CarInterfaceBase):
     # to a negative value, so it won't matter.
     ret.minEnableSpeed = -1. if stop_and_go else MIN_ACC_SPEED
 
-    if candidate in TSS2_CAR:
-      ret.flags |= ToyotaFlags.RAISED_ACCEL_LIMIT.value
+    # Stopping/starting parameters for smooth stop-and-go behavior
+    if candidate in TSS2_CAR or smart_dsu_is_detected:
+      if candidate in TSS2_CAR:
+        ret.flags |= ToyotaFlags.RAISED_ACCEL_LIMIT.value
 
       ret.vEgoStopping = 0.25
       ret.vEgoStarting = 0.25
@@ -154,8 +140,15 @@ class CarInterface(CarInterfaceBase):
   @staticmethod
   def _get_params_sp(stock_cp: structs.CarParams, ret: structs.CarParamsSP, candidate, fingerprint: dict[int, dict[int, int]],
                      car_fw: list[structs.CarParams.CarFw], alpha_long: bool, docs: bool) -> structs.CarParamsSP:
+    # Set UNSUPPORTED_DSU flag for cars that use 0x283 instead of 0x343
     if candidate in UNSUPPORTED_DSU_CAR:
       ret.safetyParam |= ToyotaSafetyFlagsSP.UNSUPPORTED_DSU
+
+    # SmartDSU-IS detection: Check for 0x2FF presence message
+    # When detected, set the SMART_DSU_IS flag to enable 0x2FE TX in panda safety
+    smart_dsu_is_detected = SDSU_PRESENCE_MSG in fingerprint[0]
+    if smart_dsu_is_detected and candidate in UNSUPPORTED_DSU_CAR:
+      ret.safetyParam |= ToyotaSafetyFlagsSP.SMART_DSU_IS
 
     if candidate in (CAR.TOYOTA_WILDLANDER, ):
       stock_cp.lateralTuning.init('pid')

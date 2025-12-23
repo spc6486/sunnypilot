@@ -1,3 +1,4 @@
+from opendbc.can import CanData
 from opendbc.car.structs import CarParams
 from opendbc.sunnypilot.car.toyota.secoc_long import SecOCLong
 
@@ -55,7 +56,8 @@ def create_accel_command(packer, accel, pcm_cancel, permit_braking, standstill_r
     "ACC_CUT_IN": fcw_alert,  # only shown when ACC enabled
   }
 
-  SECOC_LONG.update_accel_command(packer, values)
+  if SECOC_LONG is not None:
+    SECOC_LONG.update_accel_command(packer, values)
 
   return packer.make_can_msg("ACC_CONTROL", 0, values)
 
@@ -153,6 +155,7 @@ def create_ui_command(packer, steer, chime, left_line, right_line, left_lane_dep
 
 
 def toyota_checksum(address: int, sig, d: bytearray) -> int:
+  """Calculate Toyota checksum for a message."""
   s = len(d)
   addr = address
   while addr:
@@ -161,3 +164,82 @@ def toyota_checksum(address: int, sig, d: bytearray) -> int:
   for i in range(len(d) - 1):
     s += d[i]
   return s & 0xFF
+
+
+def create_sdsu_accel_command(accel: float, permit_braking: bool, release_standstill: bool,
+                               cancel_req: bool, long_active: bool, counter: int) -> CanData:
+  """
+  Create SmartDSU-IS acceleration command (0x2FE).
+
+  This message is sent from OpenPilot to the SmartDSU-IS ESP32 hardware,
+  which converts it to 0x283 PRE_COLLISION format for the PCM.
+
+  Message format (8 bytes):
+    Bytes 0-1: ACCEL_CMD (int16 big-endian, scale 0.001 m/s²)
+    Byte 2:    FLAGS
+               - Bit 0: PERMIT_BRAKING
+               - Bit 1: RELEASE_STANDSTILL
+               - Bit 2: CANCEL_REQ
+               - Bit 3: LONG_ACTIVE
+    Byte 3:    Reserved (0x00)
+    Byte 4:    COUNTER (0-15, lower 4 bits)
+    Byte 5:    Reserved (0x00)
+    Byte 6:    Reserved (0x00)
+    Byte 7:    CHECKSUM (Toyota-style)
+
+  Args:
+    accel: Acceleration command in m/s² (-3.5 to +2.0)
+    permit_braking: Allow braking (gas response improvement)
+    release_standstill: Release from standstill
+    cancel_req: Request cruise cancel
+    long_active: Longitudinal control is active
+    counter: Rolling counter 0-15
+
+  Returns:
+    CanData for message ID 0x2FE
+  """
+  dat = bytearray(8)
+
+  # Bytes 0-1: ACCEL_CMD (int16 big-endian, scale 0.001 m/s²)
+  # Clamp to safety limits: -3.5 to +2.0 m/s²
+  accel_clamped = max(-3.5, min(2.0, accel))
+  accel_raw = int(accel_clamped * 1000)  # Convert to 0.001 m/s² units
+
+  # Handle two's complement for negative values
+  if accel_raw < 0:
+    accel_raw = accel_raw & 0xFFFF
+
+  dat[0] = (accel_raw >> 8) & 0xFF  # High byte
+  dat[1] = accel_raw & 0xFF         # Low byte
+
+  # Byte 2: FLAGS
+  flags = 0
+  if permit_braking:
+    flags |= (1 << 0)
+  if release_standstill:
+    flags |= (1 << 1)
+  if cancel_req:
+    flags |= (1 << 2)
+  if long_active:
+    flags |= (1 << 3)
+  dat[2] = flags
+
+  # Byte 3: Reserved
+  dat[3] = 0x00
+
+  # Byte 4: COUNTER (0-15)
+  dat[4] = counter & 0x0F
+
+  # Bytes 5-6: Reserved
+  dat[5] = 0x00
+  dat[6] = 0x00
+
+  # Byte 7: CHECKSUM (Toyota-style)
+  # sum(bytes 0-6) + (addr >> 8) + (addr & 0xFF) + len
+  checksum = sum(dat[0:7])
+  checksum += (0x2FE >> 8) & 0xFF  # 0x02
+  checksum += 0x2FE & 0xFF          # 0xFE
+  checksum += 8                     # message length
+  dat[7] = checksum & 0xFF
+
+  return CanData(0x2FE, bytes(dat), 0)
