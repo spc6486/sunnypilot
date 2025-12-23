@@ -162,6 +162,8 @@ class CarInterface(CarInterfaceBase):
     if SDSU_PRESENCE_MSG in fingerprint[0]:
       stock_cp.autoResumeSng = True
       stock_cp.minEnableSpeed = -1.  # Allow engagement at any speed
+      stock_cp.openpilotLongitudinalControl = True  # Enable OP longitudinal
+      ret.safetyParam |= ToyotaSafetyFlagsSP.SMART_DSU_IS  # Enable 0x2FE TX in panda safety
     if candidate in (CAR.TOYOTA_WILDLANDER, ):
       stock_cp.lateralTuning.init('pid')
       stock_cp.lateralTuning.pid.kiBP = [0.0]
