@@ -667,3 +667,18 @@ CM_ SG_ 610 TYPE "seems 1 on Corolla, 0 on all others";
 VAL_ 610 IPAS_STATE 5 "override" 3 "enabled" 1 "disabled";
 VAL_ 610 LKA_STATE 25 "temporary_fault" 9 "temporary_fault2" 5 "active" 1 "standby";
 VAL_ 610 LTA_STATE 25 "temporary_fault" 9 "temporary_fault2" 5 "active" 3 "lta_missing_unavailable" 1 "standby";
+
+BO_ 766 SDSU_ACCEL_CMD: 8 XXX
+ SG_ ACCEL_CMD : 7|16@0- (0.001,0) [-3.5|2.0] "m/s^2" XXX
+ SG_ PERMIT_BRAKING : 16|1@1+ (1,0) [0|1] "" XXX
+ SG_ RELEASE_STANDSTILL : 17|1@1+ (1,0) [0|1] "" XXX
+ SG_ CANCEL_REQ : 18|1@1+ (1,0) [0|1] "" XXX
+ SG_ LONG_ACTIVE : 19|1@1+ (1,0) [0|1] "" XXX
+ SG_ COUNTER : 32|4@1+ (1,0) [0|15] "" XXX
+ SG_ CHECKSUM : 56|8@1+ (1,0) [0|255] "" XXX
+
+BO_ 767 SDSU_PRESENCE: 8 XXX
+ SG_ VERSION : 7|8@0+ (1,0) [0|255] "" XXX
+ SG_ STATUS : 15|8@0+ (1,0) [0|255] "" XXX
+ SG_ COUNTER : 39|8@0+ (1,0) [0|255] "" XXX
+ SG_ CHECKSUM : 63|8@0+ (1,0) [0|255] "" XXX
