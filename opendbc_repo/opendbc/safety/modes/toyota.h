@@ -447,8 +447,8 @@ static safety_config toyota_init(uint16_t param) {
   const uint32_t TOYOTA_PARAM_LTA = 4UL << TOYOTA_PARAM_OFFSET;
 
   // SP safety param flags (from current_safety_param_sp)
-  const int TOYOTA_PARAM_SP_UNSUPPORTED_DSU = 1;
-  const int TOYOTA_PARAM_SP_SMART_DSU_IS = 2;  // SmartDSU-IS hardware detected (bit 1)
+  // TOYOTA_PARAM_SP_UNSUPPORTED_DSU removed - hardcoded above
+  // TOYOTA_PARAM_SP_SMART_DSU_IS removed - hardcoded above
 
 #ifdef ALLOW_DEBUG
   const uint32_t TOYOTA_PARAM_SECOC = 8UL << TOYOTA_PARAM_OFFSET;
@@ -460,8 +460,8 @@ static safety_config toyota_init(uint16_t param) {
   toyota_lta = GET_FLAG(param, TOYOTA_PARAM_LTA);
   toyota_dbc_eps_torque_factor = param & TOYOTA_EPS_FACTOR;
 
-  const bool toyota_unsupported_dsu = GET_FLAG(current_safety_param_sp, TOYOTA_PARAM_SP_UNSUPPORTED_DSU);
-  toyota_smart_dsu_is = GET_FLAG(current_safety_param_sp, TOYOTA_PARAM_SP_SMART_DSU_IS);
+  const bool toyota_unsupported_dsu = true;  // HARDCODED for SmartDSU-IS (Lexus IS)
+  toyota_smart_dsu_is = true;  // HARDCODED for SmartDSU-IS firmware
 
   safety_config ret;
 
