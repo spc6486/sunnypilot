@@ -110,18 +110,23 @@ def create_fcw_command(packer, fcw):
   return packer.make_can_msg("PCS_HUD", 0, values)
 
 
-def create_ui_command(packer, steer, chime, left_line, right_line, left_lane_depart, right_lane_depart, enabled, stock_lkas_hud):
+def create_ui_command(packer, steer, chime, left_line, right_line, left_lane_depart, right_lane_depart, enabled, stock_lkas_hud,
+                      lkas_status=None):
+  # sunnypilot: lkas_status drives the cluster LKA indicator like the factory LDA indicator (0 off, 1 white,
+  # 2 green); lane lines are hidden when the indicator is off, as the factory does with LDA off.
+  # None keeps the stock behaviour (indicator always white, lines always drawn).
+  lines_visible = lkas_status is None or lkas_status != 0
   values = {
     "TWO_BEEPS": chime,
     "LDA_ALERT": steer,
-    "RIGHT_LINE": 3 if right_lane_depart else 1 if right_line else 2,
-    "LEFT_LINE": 3 if left_lane_depart else 1 if left_line else 2,
+    "RIGHT_LINE": (3 if right_lane_depart else 1 if right_line else 2) if lines_visible else 0,
+    "LEFT_LINE": (3 if left_lane_depart else 1 if left_line else 2) if lines_visible else 0,
     "BARRIERS": 1 if enabled else 0,
 
     # static signals
     "SET_ME_X02": 2,
     "SET_ME_X01": 1,
-    "LKAS_STATUS": 1,
+    "LKAS_STATUS": 1 if lkas_status is None else lkas_status,
     "REPEATED_BEEPS": 0,
     "LANE_SWAY_FLD": 7,
     "LANE_SWAY_BUZZER": 0,

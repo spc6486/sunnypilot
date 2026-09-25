@@ -8,6 +8,7 @@ from opendbc.car.interfaces import CarStateBase
 from opendbc.car.toyota.values import ToyotaFlags, CAR, DBC, STEER_THRESHOLD, NO_STOP_TIMER_CAR, \
                                                   TSS2_CAR, EPS_SCALE
 from opendbc.sunnypilot.car.toyota.carstate_ext import CarStateExt
+from opendbc.sunnypilot.car.toyota.mads import MadsCarState
 from opendbc.sunnypilot.car.toyota.values import ToyotaFlagsSP
 
 ButtonType = structs.CarState.ButtonEvent.Type
@@ -25,9 +26,10 @@ TEMP_STEER_FAULTS = (0, 9, 11, 21, 25)
 PERM_STEER_FAULTS = (3, 17)
 
 
-class CarState(CarStateBase, CarStateExt):
+class CarState(CarStateBase, MadsCarState, CarStateExt):
   def __init__(self, CP, CP_SP):
     CarStateBase.__init__(self, CP, CP_SP)
+    MadsCarState.__init__(self, CP, CP_SP)
     CarStateExt.__init__(self, CP, CP_SP)
     can_define = CANDefine(DBC[CP.carFingerprint][Bus.pt])
     self.eps_torque_scale = EPS_SCALE[CP.carFingerprint] / 100.
@@ -212,6 +214,13 @@ class CarState(CarStateBase, CarStateExt):
       self.distance_button = cp.vl["SDSU"]["FD_BUTTON"]
 
       buttonEvents += create_button_events(self.distance_button, prev_distance_button, {1: ButtonType.gapAdjustCruise})
+
+    # sunnypilot: LDA button as a MADS toggle on cars where the press is only visible as a level change of the
+    # camera's LKAS_STATUS (UNSUPPORTED_DSU). Emitted as a press/release pair like the TSS2 path above.
+    MadsCarState.update_mads(self, ret, can_parsers)
+    if self.lkas_button_edge:
+      buttonEvents.extend(create_button_events(1, 0, {1: ButtonType.lkas}) +
+                          create_button_events(0, 1, {1: ButtonType.lkas}))
 
     ret.buttonEvents = buttonEvents
 
