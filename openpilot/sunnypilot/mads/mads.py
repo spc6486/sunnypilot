@@ -9,6 +9,7 @@ from openpilot.cereal import log, custom
 
 from opendbc.car import structs
 from opendbc.car.hyundai.values import HyundaiFlags
+from opendbc.car.toyota.values import ToyotaFlags
 from openpilot.common.params import Params
 from openpilot.sunnypilot.mads.helpers import MadsSteeringModeOnBrake, read_steering_mode_param, MADS_NO_ACC_MAIN_BUTTON
 from openpilot.sunnypilot.mads.state import StateMachine, GEARS_ALLOW_PAUSED_SILENT
@@ -51,6 +52,13 @@ class ModularAssistiveDrivingSystem:
     if self.CP.brand in MADS_NO_ACC_MAIN_BUTTON:
       self.no_main_cruise = True
 
+    # LKAS-button pause mode: the button pauses/resumes MADS instead of disabling/enabling it. MADS stays
+    # "enabled" while paused, so the panda's MADS heartbeat keeps controls_allowed_lateral and no safety-side
+    # button hook is needed to re-arm lateral on resume. Used on cars whose LKAS button the safety code does
+    # not observe (Toyota UNSUPPORTED_DSU: Lexus IS/RC 2017-19, LDA button wired to the DSU).
+    self.button_pause_mode = self.CP.brand == "toyota" and bool(self.CP.flags & ToyotaFlags.UNSUPPORTED_DSU)
+    self.user_paused = False
+
     # read params on init
     self.enabled_toggle = self.params.get_bool("Mads")
     self.main_enabled_toggle = self.params.get_bool("MadsMainCruiseAllowed")
@@ -69,6 +77,9 @@ class ModularAssistiveDrivingSystem:
     return False
 
   def should_silent_lkas_enable(self, CS: structs.CarState) -> bool:
+    if self.user_paused:
+      return False
+
     if self.steering_mode_on_brake == MadsSteeringModeOnBrake.PAUSE and (CS.brakePressed or CS.regenBraking or self.pedal_pressed_non_gas_pressed(CS)):
       return False
 
@@ -173,11 +184,29 @@ class ModularAssistiveDrivingSystem:
           self.events_sp.add(EventNameSP.manualLongitudinalRequired)
       if be.type == ButtonType.lkas and be.pressed and (CS.cruiseState.available or self.allow_always):
         if self.enabled:
-          if self.selfdrive.enabled:
+          if self.button_pause_mode:
+            # Pause/resume instead of disable/enable, whether or not longitudinal is engaged. MADS stays enabled
+            # while paused, so the panda's MADS heartbeat keeps controls_allowed_lateral armed; a stock-style
+            # disable here would let the panda revoke it after ~3 heartbeats with no button edge to re-request
+            # it, which surfaces as "Controls Mismatch: Lateral" once longitudinal later disengages.
+            if self.user_paused:
+              self.user_paused = False
+              # resume: ENABLE from paused (state.py). Stock engage chime when longitudinal is engaged, silent
+              # otherwise (factory LDA-button feel; the cluster indicator is the feedback).
+              self.events_sp.add(EventNameSP.lkasEnable if self.selfdrive.enabled else EventNameSP.silentLkasEnable)
+            else:
+              self.user_paused = True
+              # USER_DISABLE with silentLkasDisable present lands in State.paused (state.py). With longitudinal
+              # engaged also raise the stock "Manual Steering Required" alert (USER_DISABLE too; paused still wins).
+              self.events_sp.add(EventNameSP.silentLkasDisable)
+              if self.selfdrive.enabled:
+                self.events_sp.add(EventNameSP.manualSteeringRequired)
+          elif self.selfdrive.enabled:
             self.events_sp.add(EventNameSP.manualSteeringRequired)
           else:
             self.events_sp.add(EventNameSP.lkasDisable)
         else:
+          self.user_paused = False
           self.events_sp.add(EventNameSP.lkasEnable)
 
     if not CS.cruiseState.available and not self.no_main_cruise:
@@ -217,6 +246,11 @@ class ModularAssistiveDrivingSystem:
 
     if not self.CP.passive and self.selfdrive.initialized:
       self.enabled, self.active = self.state_machine.update()
+
+    # a user pause only survives while MADS stays enabled (paused); any real disable (MAIN off, immediate
+    # disable, ...) clears it so the next enable starts unpaused
+    if not self.enabled:
+      self.user_paused = False
 
     # Copy of previous SelfdriveD states for MADS events handling
     self.selfdrive.enabled_prev = self.selfdrive.enabled
