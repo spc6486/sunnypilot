@@ -18,6 +18,7 @@ from opendbc.car.carlog import carlog
 from opendbc.car.fw_versions import ObdCallback
 from opendbc.car.car_helpers import get_car, interfaces
 from opendbc.car.interfaces import CarInterfaceBase, RadarInterfaceBase
+from opendbc.car.toyota.values import ToyotaFlags
 from openpilot.selfdrive.pandad import can_capnp_to_list, can_list_to_can_capnp
 from openpilot.selfdrive.car.cruise import VCruiseHelper
 from openpilot.selfdrive.car.helpers import convert_carControlSP, convert_to_capnp
@@ -180,6 +181,15 @@ class Car:
 
     self.v_cruise_helper = VCruiseHelper(self.CP, self.CP_SP)
 
+    # Lexus IS/RC (UNSUPPORTED_DSU): the factory DRCC follow-distance selector drives the longitudinal personality.
+    # The DSU broadcasts the selected level in PCM_CRUISE_ALT (0x3F1, ~1 Hz) whenever it is powered, and
+    # openpilot cannot actuate the selector on these cars (it is a wired input to the DSU), so the car is master:
+    # 3 (close) -> aggressive, 2 (medium) -> standard, 1 (far) -> relaxed. 0 (constant-speed cruise mode) is
+    # not a level; it is ignored and the last written value is held. Only active with openpilot longitudinal.
+    self.fd_personality_sync = (self.CP.brand == "toyota" and bool(self.CP.flags & ToyotaFlags.UNSUPPORTED_DSU)
+                                and self.CP.openpilotLongitudinalControl)
+    self.fd_personality_last = 0
+
     self.is_metric = self.params.get_bool("IsMetric")
     self.experimental_mode = self.params.get_bool("ExperimentalMode")
 
@@ -198,6 +208,13 @@ class Car:
     # Update carState from CAN
     CS, CS_SP = self.CI.update(can_list)
     CS_SP = convert_to_capnp(CS_SP)
+
+    # Follow the factory follow-distance selector (see __init__). selfdrived re-reads the param at 10 Hz.
+    if self.fd_personality_sync:
+      fd = int(self.CI.CS.pcm_follow_distance)
+      if fd in (1, 2, 3) and fd != self.fd_personality_last:
+        self.fd_personality_last = fd
+        self.params.put("LongitudinalPersonality", 3 - fd)
 
     # Update radar tracks from CAN
     RD: structs.RadarDataT | None = self.RI.update(can_list)
