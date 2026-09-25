@@ -313,6 +313,11 @@ class CarController(CarControllerBase, GasInterceptorCarController, MadsCarContr
         # forcing the pcm to disengage causes a bad fault sound so play a good sound instead
         send_ui = True
 
+      # sunnypilot: push the MADS-driven LKA indicator as soon as it changes (always None on other cars)
+      if lkas_status != self.lkas_status_last:
+        send_ui = True
+        self.lkas_status_last = lkas_status
+
       if self.frame % 20 == 0 or send_ui:
         can_sends.append(toyotacan.create_ui_command(self.packer, steer_alert, pcm_cancel_cmd, hud_control.leftLaneVisible,
                                                      hud_control.rightLaneVisible, hud_control.leftLaneDepart,
