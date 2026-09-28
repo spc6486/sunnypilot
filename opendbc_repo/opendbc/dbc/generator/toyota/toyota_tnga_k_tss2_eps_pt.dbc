@@ -2,16 +2,18 @@ CM_ "IMPORT _community.dbc";
 CM_ "IMPORT _toyota_2017.dbc";
 CM_ "IMPORT _toyota_adas_standard.dbc";
 
+CM_ "toyota_tnga_k_pt for a car fitted with a TSS2 power-steering ECU, which sends EPS_STATUS as 8 bytes with the checksum in the last byte. Selected at run time when ToyotaFlagsSP.TSS2_EPS is detected; everything else must stay identical to toyota_tnga_k_pt.dbc (opendbc/sunnypilot/car/toyota/test_tss2_eps.py)";
+
 BO_ 550 BRAKE_MODULE: 8 XXX
  SG_ BRAKE_PRESSURE : 0|9@0+ (1,0) [0|511] "" XXX
  SG_ BRAKE_POSITION : 16|9@0+ (1,0) [0|511] "" XXX
  SG_ BRAKE_PRESSED : 37|1@0+ (1,0) [0|1] "" XXX
 
-BO_ 610 EPS_STATUS: 5 EPS
+BO_ 610 EPS_STATUS: 8 EPS
  SG_ IPAS_STATE : 3|4@0+ (1,0) [0|15] "" XXX
  SG_ LKA_STATE : 31|7@0+ (1,0) [0|127] "" XXX
  SG_ TYPE : 24|1@0+ (1,0) [0|1] "" XXX
- SG_ CHECKSUM : 39|8@0+ (1,0) [0|255] "" XXX
+ SG_ CHECKSUM : 63|8@0+ (1,0) [0|255] "" XXX
 
 CM_ SG_ 550 BRAKE_PRESSURE "seems prop to pedal force";
 CM_ SG_ 550 BRAKE_POSITION "seems proportional to pedal displacement, unclear the max value of 0x1c8";

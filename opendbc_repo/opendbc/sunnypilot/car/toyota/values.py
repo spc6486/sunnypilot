@@ -14,6 +14,14 @@ class ToyotaFlagsSP(IntFlag):
   ZSS = 4
   STOCK_LONGITUDINAL = 8
   STOP_AND_GO_HACK = 16
+  TSS2_EPS = 32
+
+
+# DBCs that define the stock 5-byte EPS_STATUS, mapped to the variant with the 8-byte EPS_STATUS a TSS2 power-steering
+# ECU sends (checksum in the last byte). carstate parses with the variant when ToyotaFlagsSP.TSS2_EPS is detected.
+TSS2_EPS_DBC = {
+  "toyota_tnga_k_pt_generated": "toyota_tnga_k_tss2_eps_pt_generated",
+}
 
 
 class ToyotaSafetyFlagsSP:

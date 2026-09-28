@@ -6,7 +6,7 @@ from opendbc.car.toyota.values import Ecu, CAR, DBC, ToyotaFlags, CarControllerP
                                                   MIN_ACC_SPEED, EPS_SCALE, NO_STOP_TIMER_CAR, ToyotaSafetyFlags, UNSUPPORTED_DSU_CAR
 from opendbc.car.disable_ecu import disable_ecu
 from opendbc.car.interfaces import CarInterfaceBase
-from opendbc.sunnypilot.car.toyota.values import ToyotaFlagsSP, ToyotaSafetyFlagsSP
+from opendbc.sunnypilot.car.toyota.values import ToyotaFlagsSP, ToyotaSafetyFlagsSP, TSS2_EPS_DBC
 
 SteerControlType = structs.CarParams.SteerControlType
 
@@ -142,6 +142,12 @@ class CarInterface(CarInterfaceBase):
     # https://github.com/zorrobyte/betterToyotaAngleSensorForOP
     if 0x23 in fingerprint[0] and not stock_cp.flags & ToyotaFlags.SECOC:
       ret.flags |= ToyotaFlagsSP.ZSS.value
+
+    # Detect a TSS2 power-steering ECU fitted to a car whose DBC defines the stock 5-byte EPS_STATUS (e.g. a 2021+ EPS
+    # in a 2017-20 Lexus IS): it sends EPS_STATUS (0x262) as 8 bytes with the checksum in the last byte, which the stock
+    # definition rejects (CAN error). carstate then parses the 8-byte definition; cars with the stock EPS are unchanged.
+    if fingerprint[0].get(0x262) == 8 and DBC[candidate][Bus.pt] in TSS2_EPS_DBC:
+      ret.flags |= ToyotaFlagsSP.TSS2_EPS.value
 
     if candidate == CAR.TOYOTA_PRIUS:
       if ret.flags & ToyotaFlagsSP.ZSS:

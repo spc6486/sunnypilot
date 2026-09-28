@@ -9,7 +9,7 @@ from opendbc.car.toyota.values import ToyotaFlags, CAR, DBC, STEER_THRESHOLD, NO
                                                   TSS2_CAR, EPS_SCALE
 from opendbc.sunnypilot.car.toyota.carstate_ext import CarStateExt
 from opendbc.sunnypilot.car.toyota.mads import MadsCarState
-from opendbc.sunnypilot.car.toyota.values import ToyotaFlagsSP
+from opendbc.sunnypilot.car.toyota.values import ToyotaFlagsSP, TSS2_EPS_DBC
 
 ButtonType = structs.CarState.ButtonEvent.Type
 SteerControlType = structs.CarParams.SteerControlType
@@ -239,7 +239,12 @@ class CarState(CarStateBase, MadsCarState, CarStateExt):
       ("RSA2", 0),
     ]
 
+    pt_dbc = DBC[CP.carFingerprint][Bus.pt]
+    if CP_SP.flags & ToyotaFlagsSP.TSS2_EPS:
+      # TSS2 power-steering ECU on a car whose DBC has the stock 5-byte EPS_STATUS (see interface.py)
+      pt_dbc = TSS2_EPS_DBC.get(pt_dbc, pt_dbc)
+
     return {
-      Bus.pt: CANParser(DBC[CP.carFingerprint][Bus.pt], pt_messages, 0),
-      Bus.cam: CANParser(DBC[CP.carFingerprint][Bus.pt], [] + cam_messages, 2),
+      Bus.pt: CANParser(pt_dbc, pt_messages, 0),
+      Bus.cam: CANParser(pt_dbc, [] + cam_messages, 2),
     }
