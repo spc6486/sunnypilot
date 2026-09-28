@@ -149,6 +149,16 @@ class CarInterface(CarInterfaceBase):
     if fingerprint[0].get(0x262) == 8 and DBC[candidate][Bus.pt] in TSS2_EPS_DBC:
       ret.flags |= ToyotaFlagsSP.TSS2_EPS.value
 
+    # Enhanced BSM: on the 2017-20 Lexus IS the blind spot monitor sensors do not broadcast detections (0x3F6 carries
+    # only the enabled flags); openpilot polls them instead (sunnypilot/car/toyota/bsm.py). Enabled when the left sensor
+    # answered the tester-present query at startup, so a car without the option is unchanged. Scoped to the Lexus IS,
+    # the only platform where 0x41/0x42 on 0x750 are known to be these sensors.
+    bsm_sensor_found = any(fw.ecu == Ecu.cornerRadar and fw.address == 0x750 and fw.subAddress == 0x41 for fw in car_fw)
+    if candidate == CAR.LEXUS_IS and bsm_sensor_found:
+      ret.flags |= ToyotaFlagsSP.ENHANCED_BSM.value
+      ret.safetyParam |= ToyotaSafetyFlagsSP.ENHANCED_BSM
+      stock_cp.enableBsm = True
+
     if candidate == CAR.TOYOTA_PRIUS:
       if ret.flags & ToyotaFlagsSP.ZSS:
         stock_cp.steerRatio = 15.0

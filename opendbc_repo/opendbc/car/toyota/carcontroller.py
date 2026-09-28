@@ -12,6 +12,7 @@ from opendbc.car.toyota.values import CAR, NO_STOP_TIMER_CAR, TSS2_CAR, \
                                         CarControllerParams, ToyotaFlags
 from opendbc.can import CANPacker
 
+from opendbc.sunnypilot.car.toyota.bsm import BsmCarController
 from opendbc.sunnypilot.car.toyota.gas_interceptor import GasInterceptorCarController
 from opendbc.sunnypilot.car.toyota.mads import MadsCarController
 from opendbc.sunnypilot.car.toyota.rsa import RsaCarController
@@ -52,12 +53,13 @@ def get_long_tune(CP, params):
                        rate=1 / (DT_CTRL * 3))
 
 
-class CarController(CarControllerBase, GasInterceptorCarController, MadsCarController, RsaCarController):
+class CarController(CarControllerBase, GasInterceptorCarController, MadsCarController, RsaCarController, BsmCarController):
   def __init__(self, dbc_names, CP, CP_SP):
     CarControllerBase.__init__(self, dbc_names, CP, CP_SP)
     GasInterceptorCarController.__init__(self, CP, CP_SP)
     MadsCarController.__init__(self)
     RsaCarController.__init__(self, CP, CP_SP)
+    BsmCarController.__init__(self, CP, CP_SP)
     self.params = CarControllerParams(self.CP)
     self.last_torque = 0
     self.last_angle = 0
@@ -335,6 +337,9 @@ class CarController(CarControllerBase, GasInterceptorCarController, MadsCarContr
     # keep radar disabled
     if self.frame % 20 == 0 and self.CP.flags & ToyotaFlags.DISABLE_RADAR.value:
       can_sends.append(make_tester_present_msg(0x750, 0, 0xF))
+
+    # sunnypilot: poll the blind spot monitor sensors (Enhanced BSM, Lexus IS)
+    can_sends.extend(BsmCarController.create_bsm_msgs(self, CS, self.frame))
 
     new_actuators = actuators.as_builder()
     new_actuators.torque = apply_torque / self.params.STEER_MAX

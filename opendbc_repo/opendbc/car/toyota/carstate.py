@@ -7,6 +7,7 @@ from opendbc.car.common.filter_simple import FirstOrderFilter
 from opendbc.car.interfaces import CarStateBase
 from opendbc.car.toyota.values import ToyotaFlags, CAR, DBC, STEER_THRESHOLD, NO_STOP_TIMER_CAR, \
                                                   TSS2_CAR, EPS_SCALE
+from opendbc.sunnypilot.car.toyota.bsm import BSM_DIAG_MSG, BsmCarState
 from opendbc.sunnypilot.car.toyota.carstate_ext import CarStateExt
 from opendbc.sunnypilot.car.toyota.mads import MadsCarState
 from opendbc.sunnypilot.car.toyota.rsa import NAV_MSG, RsaCarState
@@ -27,11 +28,12 @@ TEMP_STEER_FAULTS = (0, 9, 11, 21, 25)
 PERM_STEER_FAULTS = (3, 17)
 
 
-class CarState(CarStateBase, MadsCarState, RsaCarState, CarStateExt):
+class CarState(CarStateBase, MadsCarState, RsaCarState, BsmCarState, CarStateExt):
   def __init__(self, CP, CP_SP):
     CarStateBase.__init__(self, CP, CP_SP)
     MadsCarState.__init__(self, CP, CP_SP)
     RsaCarState.__init__(self, CP, CP_SP)
+    BsmCarState.__init__(self, CP, CP_SP)
     CarStateExt.__init__(self, CP, CP_SP)
     can_define = CANDefine(DBC[CP.carFingerprint][Bus.pt])
     self.eps_torque_scale = EPS_SCALE[CP.carFingerprint] / 100.
@@ -185,9 +187,12 @@ class CarState(CarStateBase, MadsCarState, RsaCarState, CarStateExt):
     ret.genericToggle = bool(cp.vl["LIGHT_STALK"]["AUTO_HIGH_BEAM"])
     ret.espDisabled = cp.vl["ESP_CONTROL"]["TC_DISABLED"] != 0
 
-    if self.CP.enableBsm:
+    if self.CP.enableBsm and not self.enhanced_bsm:
       ret.leftBlindspot = (cp.vl["BSM"]["L_ADJACENT"] == 1) or (cp.vl["BSM"]["L_APPROACHING"] == 1)
       ret.rightBlindspot = (cp.vl["BSM"]["R_ADJACENT"] == 1) or (cp.vl["BSM"]["R_APPROACHING"] == 1)
+
+    # sunnypilot: blind-spot status polled from the blind spot monitor sensors (Enhanced BSM, Lexus IS)
+    BsmCarState.update_bsm(self, ret, can_parsers)
 
     if self.CP.carFingerprint != CAR.TOYOTA_PRIUS_V:
       self.lkas_hud = copy.copy(cp_cam.vl["LKAS_HUD"])
@@ -240,6 +245,8 @@ class CarState(CarStateBase, MadsCarState, RsaCarState, CarStateExt):
     ]
     if CP.flags & ToyotaFlags.UNSUPPORTED_DSU:
       pt_messages.append((NAV_MSG, float('nan')))  # head unit, absent without navigation: no timeout check
+    if CP_SP.flags & ToyotaFlagsSP.ENHANCED_BSM:
+      pt_messages.append((BSM_DIAG_MSG, float('nan')))  # replies to openpilot's polls only: no timeout check
 
     cam_messages = [
       ("RSA1", 0),

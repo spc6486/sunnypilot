@@ -450,6 +450,22 @@ BO_ 1779 ADAS_TOGGLE_STATE: 8 XXX
  SG_ PCS_TOGGLE_CMD : 40|1@0+ (1,0) [0|1] "" XXX
  SG_ PCS_SENSITIVITY_CMD : 41|1@0+ (1,0) [0|1] "" XXX
 
+BO_ 1880 BSM_DIAG_RESPONSE: 8 XXX
+ SG_ SUB_ADDRESS : 7|8@0+ (1,0) [0|255] "" XXX
+ SG_ PCI : 15|8@0+ (1,0) [0|255] "" XXX
+ SG_ SID : 23|8@0+ (1,0) [0|255] "" XXX
+ SG_ LOCAL_ID : 31|8@0+ (1,0) [0|255] "" XXX
+ SG_ DATA_4 : 39|8@0+ (1,0) [0|255] "" XXX
+ SG_ DATA_5 : 47|8@0+ (1,0) [0|255] "" XXX
+ SG_ DATA_6 : 55|8@0+ (1,0) [0|255] "" XXX
+ SG_ DATA_7 : 63|8@0+ (1,0) [0|255] "" XXX
+
+CM_ BO_ 1880 "diagnostic responses on 0x758 (sub-addressed); sunnypilot Enhanced BSM reads the blind spot monitor sensors' replies to 0x21 0x69 (opendbc/sunnypilot/car/toyota/bsm.py)";
+CM_ SG_ 1880 SUB_ADDRESS "responding ECU: 0x41 left blind spot monitor sensor, 0x42 right";
+CM_ SG_ 1880 PCI "ISO-TP single-frame length";
+CM_ SG_ 1880 SID "0x61 = positive response to read data by local identifier; 0x7F = negative response";
+CM_ SG_ 1880 DATA_5 "dragonpilot's BLINDSPOTD1; meaning not documented";
+CM_ SG_ 1880 DATA_6 "dragonpilot's BLINDSPOTD2; meaning not documented";
 CM_ BO_ 1164 "navigation head unit, 2 Hz; the rest of the frame and 0x48D-0x48F (same update counter) are not decoded";
 CM_ SG_ 1164 SPEED_LIMIT_CODE "0x41 + posted limit / 5 when SPEED_LIMIT_FLAG is 1 (mph data seen only); 0 without a limit";
 CM_ SG_ 1164 SPEED_LIMIT_FLAG "1 with a limit, 0 without";

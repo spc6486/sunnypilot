@@ -21,16 +21,37 @@ TOYOTA_COMMON_LONG_TX_MSGS = [[0x283, 0], [0x2E6, 0], [0x2E7, 0], [0x33E, 0], [0
                               [0x750, 0]]  # radar diagnostic address
 GAS_INTERCEPTOR_TX_MSGS = [[0x200, 0]]
 RSA_TX_MSGS = [[0x489, 0], [0x48A, 0]]  # RSA1, RSA2: UNSUPPORTED_DSU with openpilot longitudinal, no interceptor
+BSM_TX_MSGS = [[0x750, 0]]  # Enhanced BSM on UNSUPPORTED_DSU with stock longitudinal (op long lists already have it)
+
+# Enhanced BSM: the only blind spot monitor requests the panda allows (sunnypilot/car/toyota/bsm.py)
+BSM_REQUESTS = [bytes([sensor]) + request for sensor in (0x41, 0x42)
+                for request in (b"\x02\x10\x60\x00\x00\x00\x00", b"\x02\x21\x69\x00\x00\x00\x00", b"\x02\x10\x01\x00\x00\x00\x00")]
+ENHANCED_BSM_SP = ToyotaSafetyFlagsSP.UNSUPPORTED_DSU | ToyotaSafetyFlagsSP.ENHANCED_BSM
 
 UNSUPPORTED_DSU = [
   {"SAFETY_PARAM_SP": ToyotaSafetyFlagsSP.DEFAULT},
   {"SAFETY_PARAM_SP": ToyotaSafetyFlagsSP.UNSUPPORTED_DSU},
+  {"SAFETY_PARAM_SP": ToyotaSafetyFlagsSP.ENHANCED_BSM},  # the bit alone does nothing
+  {"SAFETY_PARAM_SP": ENHANCED_BSM_SP},
+]
+
+# stock longitudinal: with Enhanced BSM, UNSUPPORTED_DSU cars get the diagnostic address for the BSM requests only
+UNSUPPORTED_DSU_STOCK_LONG = [
+  {"SAFETY_PARAM_SP": ToyotaSafetyFlagsSP.DEFAULT},
+  {"SAFETY_PARAM_SP": ToyotaSafetyFlagsSP.UNSUPPORTED_DSU},
+  {"SAFETY_PARAM_SP": ToyotaSafetyFlagsSP.ENHANCED_BSM},  # the bit alone does nothing
+  {"SAFETY_PARAM_SP": ENHANCED_BSM_SP, "TX_MSGS": TOYOTA_COMMON_TX_MSGS + BSM_TX_MSGS},
 ]
 
 # openpilot longitudinal without a gas interceptor: UNSUPPORTED_DSU adds RSA1/RSA2, which are then not forwarded
 UNSUPPORTED_DSU_LONG = [
   {"SAFETY_PARAM_SP": ToyotaSafetyFlagsSP.DEFAULT},
   {"SAFETY_PARAM_SP": ToyotaSafetyFlagsSP.UNSUPPORTED_DSU,
+   "TX_MSGS": TOYOTA_COMMON_TX_MSGS + TOYOTA_COMMON_LONG_TX_MSGS + RSA_TX_MSGS,
+   "RELAY_MALFUNCTION_ADDRS": {0: (0x2E4, 0x191, 0x412, 0x343, 0x489, 0x48A)},
+   "FWD_BLACKLISTED_ADDRS": {2: [0x2E4, 0x412, 0x191, 0x343, 0x489, 0x48A]}},
+  {"SAFETY_PARAM_SP": ToyotaSafetyFlagsSP.ENHANCED_BSM},  # the bit alone does nothing
+  {"SAFETY_PARAM_SP": ENHANCED_BSM_SP,
    "TX_MSGS": TOYOTA_COMMON_TX_MSGS + TOYOTA_COMMON_LONG_TX_MSGS + RSA_TX_MSGS,
    "RELAY_MALFUNCTION_ADDRS": {0: (0x2E4, 0x191, 0x412, 0x343, 0x489, 0x48A)},
    "FWD_BLACKLISTED_ADDRS": {2: [0x2E4, 0x412, 0x191, 0x343, 0x489, 0x48A]}},
@@ -110,6 +131,23 @@ class TestToyotaSafetyBase(common.CarSafetyTest, common.LongitudinalAccelSafetyT
                            (True, b"\x0F\x02\x3E\x00\x00\x00\x00\x00")):
       tester_present = libsafety_py.make_CANPacket(0x750, 0, msg)
       self.assertEqual(should_tx and ecu_disabled and not stock_longitudinal, self._tx(tester_present))
+
+    # sunnypilot: the Enhanced BSM requests, only with UNSUPPORTED_DSU and ENHANCED_BSM, wherever 0x750 is in the TX list
+    enhanced_bsm = (self.SAFETY_PARAM_SP & ENHANCED_BSM_SP) == ENHANCED_BSM_SP and [0x750, 0] in self.TX_MSGS
+    for controls_allowed in (False, True):
+      self.safety.set_controls_allowed(controls_allowed)
+      for msg in BSM_REQUESTS:
+        self.assertEqual(enhanced_bsm, self._tx(libsafety_py.make_CANPacket(0x750, 0, msg)), msg.hex())
+        # every single-bit change of a request is refused
+        for i in range(len(msg) * 8):
+          mutated = bytearray(msg)
+          mutated[i // 8] ^= 1 << (i % 8)
+          self.assertFalse(self._tx(libsafety_py.make_CANPacket(0x750, 0, bytes(mutated))), mutated.hex())
+      # other sub-addresses, sessions and services are refused
+      for msg in (b"\x40\x02\x21\x69\x00\x00\x00\x00", b"\x43\x02\x10\x60\x00\x00\x00\x00",
+                  b"\x41\x02\x10\x03\x00\x00\x00\x00", b"\x42\x02\x3e\x00\x00\x00\x00\x00",
+                  b"\x41\x02\x11\x01\x00\x00\x00\x00", b"\x0f\x02\x10\x60\x00\x00\x00\x00"):
+        self.assertFalse(self._tx(libsafety_py.make_CANPacket(0x750, 0, msg)), msg.hex())
 
   def test_block_aeb(self, stock_longitudinal: bool = False):
     for controls_allowed in (True, False):
@@ -417,7 +455,7 @@ class TestToyotaStockLongitudinalBase(TestToyotaSafetyBase):
         self.assertEqual(should_tx, self._tx(self._accel_msg_343(accel, cancel_req=1)))
 
 
-@parameterized_class(UNSUPPORTED_DSU)
+@parameterized_class(UNSUPPORTED_DSU_STOCK_LONG)
 class TestToyotaStockLongitudinalTorque(TestToyotaStockLongitudinalBase, TestToyotaSafetyTorque):
 
   @classmethod

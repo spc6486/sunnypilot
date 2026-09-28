@@ -15,6 +15,7 @@ class ToyotaFlagsSP(IntFlag):
   STOCK_LONGITUDINAL = 8
   STOP_AND_GO_HACK = 16
   TSS2_EPS = 32
+  ENHANCED_BSM = 64
 
 
 # DBCs that define the stock 5-byte EPS_STATUS, mapped to the variant with the 8-byte EPS_STATUS a TSS2 power-steering
@@ -28,3 +29,4 @@ class ToyotaSafetyFlagsSP:
   DEFAULT = 0
   UNSUPPORTED_DSU = 1
   GAS_INTERCEPTOR = 2
+  ENHANCED_BSM = 4

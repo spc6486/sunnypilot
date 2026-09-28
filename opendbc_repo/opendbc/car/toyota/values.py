@@ -544,6 +544,15 @@ FW_QUERY_CONFIG = FwQueryConfig(
                       Ecu.hybrid, Ecu.srs, Ecu.transmission, Ecu.hvac],
       bus=0,
     ),
+    # sunnypilot: presence of the blind spot monitor sensor (Enhanced BSM, sunnypilot/car/toyota/bsm.py). Short tester
+    # present only, the same first request the version query above sends; logging only, not used for fingerprinting
+    Request(
+      [StdQueries.SHORT_TESTER_PRESENT_REQUEST],
+      [StdQueries.SHORT_TESTER_PRESENT_RESPONSE],
+      whitelist_ecus=[Ecu.cornerRadar],
+      bus=0,
+      logging=True,
+    ),
   ],
   non_essential_ecus={
     # FIXME: On some models, abs can sometimes be missing
@@ -580,6 +589,9 @@ FW_QUERY_CONFIG = FwQueryConfig(
     # A few platforms have a tester present response on this address, add to log
     (Ecu.transmission, 0x7e1, None),
     (Ecu.hvac, 0x7c4, None),
+    # sunnypilot: left blind spot monitor sensor, the one on the CAN bus (2017-20 Lexus IS; Enhanced BSM). The right
+    # sensor (0x42) is not queried: each sub-addressed query adds its timeout to the startup of every car
+    (Ecu.cornerRadar, 0x750, 0x41),
   ],
   match_fw_to_car_fuzzy=match_fw_to_car_fuzzy,
 )

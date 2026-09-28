@@ -69,6 +69,7 @@ static bool toyota_secoc = false;
 static bool toyota_alt_brake = false;
 static bool toyota_stock_longitudinal = false;
 static bool toyota_lta = false;
+static bool toyota_enhanced_bsm = false;
 static int toyota_dbc_eps_torque_factor = 100;   // conversion factor for STEER_TORQUE_EPS in %: see dbc file
 
 static uint32_t toyota_compute_checksum(const CANPacket_t *msg) {
@@ -388,11 +389,23 @@ static bool toyota_tx_hook(const CANPacket_t *msg) {
     }
   }
 
-  // UDS: Only tester present ("\x0F\x02\x3E\x00\x00\x00\x00\x00") allowed on diagnostics address
+  // UDS: only tester present ("\x0F\x02\x3E\x00\x00\x00\x00\x00") and sunnypilot's Enhanced BSM requests allowed on
+  // diagnostics address
   if (msg->addr == 0x750U) {
-    // this address is sub-addressed. only allow tester present to radar (0xF)
-    bool invalid_uds_msg = (GET_BYTES(msg, 0, 4) != 0x003E020FU) || (GET_BYTES(msg, 4, 4) != 0x0U);
-    if (invalid_uds_msg) {
+    // this address is sub-addressed. only allow tester present to radar (0xF), with openpilot longitudinal
+    const uint32_t uds_head = GET_BYTES(msg, 0, 4);
+    const bool uds_tail_zero = GET_BYTES(msg, 4, 4) == 0x0U;
+    const bool radar_tester_present = (uds_head == 0x003E020FU) && uds_tail_zero && !toyota_stock_longitudinal;
+
+    // sunnypilot: Enhanced BSM (opendbc/sunnypilot/car/toyota/bsm.py) polls the blind spot monitor sensors, left 0x41
+    // and right 0x42: session 0x60, read local identifier 0x69, back to the default session. Exactly these six requests
+    const bool bsm_request = toyota_enhanced_bsm && uds_tail_zero &&
+                             ((uds_head == 0x60100241U) || (uds_head == 0x69210241U) ||   // 41 02 10 60, 41 02 21 69
+                              (uds_head == 0x01100241U) ||                                // 41 02 10 01
+                              (uds_head == 0x60100242U) || (uds_head == 0x69210242U) ||   // 42 02 10 60, 42 02 21 69
+                              (uds_head == 0x01100242U));                                 // 42 02 10 01
+
+    if (!radar_tester_present && !bsm_request) {
       tx = false;
     }
   }
@@ -424,6 +437,13 @@ static safety_config toyota_init(uint16_t param) {
     {0x489, 0, 8, .check_relay = true}, {0x48A, 0, 8, .check_relay = true},  // RSA1, RSA2
   };
 
+  // sunnypilot: Enhanced BSM on UNSUPPORTED_DSU cars with stock longitudinal needs the diagnostic address; the TX hook
+  // allows only the blind spot monitor requests on it (no radar tester present without openpilot longitudinal)
+  static const CanMsg TOYOTA_ENHANCED_BSM_TX_MSGS[] = {
+    TOYOTA_COMMON_TX_MSGS
+    {0x750, 0, 8, .check_relay = false},  // blind spot monitor diagnostic requests
+  };
+
   static const CanMsg TOYOTA_INTERCEPTOR_TX_MSGS[] = {
     TOYOTA_COMMON_LONG_TX_MSGS
     {0x200, 0, 6, .check_relay = false},  // gas interceptor
@@ -439,6 +459,7 @@ static safety_config toyota_init(uint16_t param) {
 
   const uint16_t TOYOTA_PARAM_SP_UNSUPPORTED_DSU = 1;
   const uint16_t TOYTOA_PARAM_SP_GAS_INTERCEPTOR = 2;
+  const uint16_t TOYOTA_PARAM_SP_ENHANCED_BSM = 4;
 
 #ifdef ALLOW_DEBUG
   const uint32_t TOYOTA_PARAM_SECOC = 8UL << TOYOTA_PARAM_OFFSET;
@@ -452,6 +473,8 @@ static safety_config toyota_init(uint16_t param) {
 
   const bool toyota_unsupported_dsu = GET_FLAG(current_safety_param_sp, TOYOTA_PARAM_SP_UNSUPPORTED_DSU);
   enable_gas_interceptor = GET_FLAG(current_safety_param_sp, TOYTOA_PARAM_SP_GAS_INTERCEPTOR);
+  // Enhanced BSM is only defined for the UNSUPPORTED_DSU cars; the bit alone does nothing
+  toyota_enhanced_bsm = toyota_unsupported_dsu && GET_FLAG(current_safety_param_sp, TOYOTA_PARAM_SP_ENHANCED_BSM);
 
   // gas interceptor should not be used if openpilot is not controlling longitudinal or is a TSK car
   if (toyota_stock_longitudinal || toyota_secoc) {
@@ -467,7 +490,11 @@ static safety_config toyota_init(uint16_t param) {
     }
   } else {
     if (toyota_stock_longitudinal) {
-      SET_TX_MSGS(TOYOTA_TX_MSGS, ret);
+      if (toyota_enhanced_bsm) {
+        SET_TX_MSGS(TOYOTA_ENHANCED_BSM_TX_MSGS, ret);
+      } else {
+        SET_TX_MSGS(TOYOTA_TX_MSGS, ret);
+      }
     } else if (toyota_unsupported_dsu) {
       SET_TX_MSGS(TOYOTA_UNSUPPORTED_DSU_LONG_TX_MSGS, ret);
     } else {
