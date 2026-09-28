@@ -9,6 +9,7 @@ from opendbc.car.toyota.values import ToyotaFlags, CAR, DBC, STEER_THRESHOLD, NO
                                                   TSS2_CAR, EPS_SCALE
 from opendbc.sunnypilot.car.toyota.carstate_ext import CarStateExt
 from opendbc.sunnypilot.car.toyota.mads import MadsCarState
+from opendbc.sunnypilot.car.toyota.rsa import NAV_MSG, RsaCarState
 from opendbc.sunnypilot.car.toyota.values import ToyotaFlagsSP, TSS2_EPS_DBC
 
 ButtonType = structs.CarState.ButtonEvent.Type
@@ -26,10 +27,11 @@ TEMP_STEER_FAULTS = (0, 9, 11, 21, 25)
 PERM_STEER_FAULTS = (3, 17)
 
 
-class CarState(CarStateBase, MadsCarState, CarStateExt):
+class CarState(CarStateBase, MadsCarState, RsaCarState, CarStateExt):
   def __init__(self, CP, CP_SP):
     CarStateBase.__init__(self, CP, CP_SP)
     MadsCarState.__init__(self, CP, CP_SP)
+    RsaCarState.__init__(self, CP, CP_SP)
     CarStateExt.__init__(self, CP, CP_SP)
     can_define = CANDefine(DBC[CP.carFingerprint][Bus.pt])
     self.eps_torque_scale = EPS_SCALE[CP.carFingerprint] / 100.
@@ -224,6 +226,9 @@ class CarState(CarStateBase, MadsCarState, CarStateExt):
 
     ret.buttonEvents = buttonEvents
 
+    # sunnypilot: navigation speed limit for the cluster's road-sign display (UNSUPPORTED_DSU)
+    RsaCarState.update_rsa(self, can_parsers)
+
     CarStateExt.update(self, ret, ret_sp, can_parsers)
 
     return ret, ret_sp
@@ -233,6 +238,8 @@ class CarState(CarStateBase, MadsCarState, CarStateExt):
     pt_messages = [
       ("BLINKERS_STATE", float('nan')),
     ]
+    if CP.flags & ToyotaFlags.UNSUPPORTED_DSU:
+      pt_messages.append((NAV_MSG, float('nan')))  # head unit, absent without navigation: no timeout check
 
     cam_messages = [
       ("RSA1", 0),

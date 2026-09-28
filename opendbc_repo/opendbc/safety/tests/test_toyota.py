@@ -20,10 +20,20 @@ TOYOTA_COMMON_LONG_TX_MSGS = [[0x283, 0], [0x2E6, 0], [0x2E7, 0], [0x33E, 0], [0
                               [0x411, 0],  # PCS_HUD
                               [0x750, 0]]  # radar diagnostic address
 GAS_INTERCEPTOR_TX_MSGS = [[0x200, 0]]
+RSA_TX_MSGS = [[0x489, 0], [0x48A, 0]]  # RSA1, RSA2: UNSUPPORTED_DSU with openpilot longitudinal, no interceptor
 
 UNSUPPORTED_DSU = [
   {"SAFETY_PARAM_SP": ToyotaSafetyFlagsSP.DEFAULT},
   {"SAFETY_PARAM_SP": ToyotaSafetyFlagsSP.UNSUPPORTED_DSU},
+]
+
+# openpilot longitudinal without a gas interceptor: UNSUPPORTED_DSU adds RSA1/RSA2, which are then not forwarded
+UNSUPPORTED_DSU_LONG = [
+  {"SAFETY_PARAM_SP": ToyotaSafetyFlagsSP.DEFAULT},
+  {"SAFETY_PARAM_SP": ToyotaSafetyFlagsSP.UNSUPPORTED_DSU,
+   "TX_MSGS": TOYOTA_COMMON_TX_MSGS + TOYOTA_COMMON_LONG_TX_MSGS + RSA_TX_MSGS,
+   "RELAY_MALFUNCTION_ADDRS": {0: (0x2E4, 0x191, 0x412, 0x343, 0x489, 0x48A)},
+   "FWD_BLACKLISTED_ADDRS": {2: [0x2E4, 0x412, 0x191, 0x343, 0x489, 0x48A]}},
 ]
 
 
@@ -147,6 +157,13 @@ class TestToyotaSafetyBase(common.CarSafetyTest, common.LongitudinalAccelSafetyT
     msg = self._speed_msg(0, quality_flag=False)
     self.assertFalse(self._rx(msg))
 
+  def test_rsa_tx(self):
+    # sunnypilot: the road-sign frames are allowed exactly where the TX list has them, independent of controls_allowed
+    for controls_allowed in (False, True):
+      self.safety.set_controls_allowed(controls_allowed)
+      for addr in (0x489, 0x48A):
+        self.assertEqual([addr, 0] in self.TX_MSGS, self._tx(common.make_msg(0, addr, 8)), f"{addr=:#x}")
+
   def test_vehicle_speed_measurements(self):
     # OVERRIDDEN: 72.22_ is the max speed in m/s
     self._common_measurement_test(self._speed_msg, 0, 259 / 3.6, 1,
@@ -181,7 +198,7 @@ class TestToyotaSafetyGasInterceptorBase(GasInterceptorSafetyTest, TestToyotaSaf
           test()
 
 
-@parameterized_class(UNSUPPORTED_DSU)
+@parameterized_class(UNSUPPORTED_DSU_LONG)
 class TestToyotaSafetyTorque(TestToyotaSafetyBase, common.MotorTorqueSteeringSafetyTest, common.SteerRequestCutSafetyTest):
 
   MAX_RATE_UP = 15
@@ -334,7 +351,7 @@ class TestToyotaSafetyAngleGasInterceptor(TestToyotaSafetyGasInterceptorBase, Te
   pass
 
 
-@parameterized_class(UNSUPPORTED_DSU)
+@parameterized_class(UNSUPPORTED_DSU_LONG)
 class TestToyotaAltBrakeSafety(TestToyotaSafetyTorque):
 
   @classmethod

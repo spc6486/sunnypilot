@@ -417,6 +417,13 @@ static safety_config toyota_init(uint16_t param) {
     TOYOTA_COMMON_SECOC_LONG_TX_MSGS
   };
 
+  // sunnypilot: with openpilot longitudinal, UNSUPPORTED_DSU cars also send the cluster's road-sign frames RSA1 and
+  // RSA2 (opendbc/sunnypilot/car/toyota/rsa.py); check_relay stops forwarding the camera's copies
+  static const CanMsg TOYOTA_UNSUPPORTED_DSU_LONG_TX_MSGS[] = {
+    TOYOTA_COMMON_LONG_TX_MSGS
+    {0x489, 0, 8, .check_relay = true}, {0x48A, 0, 8, .check_relay = true},  // RSA1, RSA2
+  };
+
   static const CanMsg TOYOTA_INTERCEPTOR_TX_MSGS[] = {
     TOYOTA_COMMON_LONG_TX_MSGS
     {0x200, 0, 6, .check_relay = false},  // gas interceptor
@@ -461,6 +468,8 @@ static safety_config toyota_init(uint16_t param) {
   } else {
     if (toyota_stock_longitudinal) {
       SET_TX_MSGS(TOYOTA_TX_MSGS, ret);
+    } else if (toyota_unsupported_dsu) {
+      SET_TX_MSGS(TOYOTA_UNSUPPORTED_DSU_LONG_TX_MSGS, ret);
     } else {
       SET_TX_MSGS(TOYOTA_LONG_TX_MSGS, ret);
     }

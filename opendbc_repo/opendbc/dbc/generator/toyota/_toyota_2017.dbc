@@ -362,6 +362,11 @@ BO_ 1163 RSA3: 8 FCM
  SG_ OVSPVALH : 27|4@0+ (1,-5) [0|0] "" XXX
  SG_ TSRSPU : 33|2@0+ (1,0) [0|0] "" XXX
 
+BO_ 1164 NAV_SPEED_LIMIT: 8 XXX
+ SG_ SPEED_LIMIT_CODE : 7|8@0+ (1,0) [0|255] "" XXX
+ SG_ SPEED_LIMIT_FLAG : 15|8@0+ (1,0) [0|255] "" XXX
+ SG_ UPDATE_COUNTER : 63|8@0+ (1,0) [0|255] "" XXX
+
 BO_ 1408 VIN_PART_1: 8 CGW
  SG_ VIN_1 : 7|8@0+ (1,0) [0|0] "" XXX
  SG_ VIN_2 : 15|8@0+ (1,0) [0|0] "" XXX
@@ -445,6 +450,10 @@ BO_ 1779 ADAS_TOGGLE_STATE: 8 XXX
  SG_ PCS_TOGGLE_CMD : 40|1@0+ (1,0) [0|1] "" XXX
  SG_ PCS_SENSITIVITY_CMD : 41|1@0+ (1,0) [0|1] "" XXX
 
+CM_ BO_ 1164 "navigation head unit, 2 Hz; the rest of the frame and 0x48D-0x48F (same update counter) are not decoded";
+CM_ SG_ 1164 SPEED_LIMIT_CODE "0x41 + posted limit / 5 when SPEED_LIMIT_FLAG is 1 (mph data seen only); 0 without a limit";
+CM_ SG_ 1164 SPEED_LIMIT_FLAG "1 with a limit, 0 without";
+CM_ SG_ 1164 UPDATE_COUNTER "shared with 0x48D-0x48F; in every logged route a change of bytes 0-1 came with a new value";
 CM_ SG_ 36 YAW_RATE "verify";
 CM_ SG_ 36 ACCEL_X "x-axis accel";
 CM_ SG_ 37 STEER_FRACTION "1/15th of the signal STEER_ANGLE, which is 1.5 deg; note that 0x8 is never set";

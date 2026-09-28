@@ -14,6 +14,7 @@ from opendbc.can import CANPacker
 
 from opendbc.sunnypilot.car.toyota.gas_interceptor import GasInterceptorCarController
 from opendbc.sunnypilot.car.toyota.mads import MadsCarController
+from opendbc.sunnypilot.car.toyota.rsa import RsaCarController
 from opendbc.sunnypilot.car.toyota.values import ToyotaFlagsSP
 
 Ecu = structs.CarParams.Ecu
@@ -51,11 +52,12 @@ def get_long_tune(CP, params):
                        rate=1 / (DT_CTRL * 3))
 
 
-class CarController(CarControllerBase, GasInterceptorCarController, MadsCarController):
+class CarController(CarControllerBase, GasInterceptorCarController, MadsCarController, RsaCarController):
   def __init__(self, dbc_names, CP, CP_SP):
     CarControllerBase.__init__(self, dbc_names, CP, CP_SP)
     GasInterceptorCarController.__init__(self, CP, CP_SP)
     MadsCarController.__init__(self)
+    RsaCarController.__init__(self, CP, CP_SP)
     self.params = CarControllerParams(self.CP)
     self.last_torque = 0
     self.last_angle = 0
@@ -326,6 +328,9 @@ class CarController(CarControllerBase, GasInterceptorCarController, MadsCarContr
 
       if (self.frame % 100 == 0 or send_ui) and self.CP.flags & ToyotaFlags.DISABLE_RADAR.value:
         can_sends.append(toyotacan.create_fcw_command(self.packer, fcw_alert))
+
+      # sunnypilot: road-sign display from the navigation speed limit (UNSUPPORTED_DSU, openpilot longitudinal)
+      can_sends.extend(RsaCarController.create_rsa_msgs(self, CS, self.frame))
 
     # keep radar disabled
     if self.frame % 20 == 0 and self.CP.flags & ToyotaFlags.DISABLE_RADAR.value:
