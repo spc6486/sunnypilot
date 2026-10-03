@@ -16,11 +16,28 @@ from openpilot.selfdrive.car.cruise import V_CRUISE_MAX, V_CRUISE_UNSET
 from openpilot.common.swaglog import cloudlog
 
 from openpilot.sunnypilot.selfdrive.controls.lib.longitudinal_planner import LongitudinalPlannerSP
+from openpilot.sunnypilot.lexus_is import features as lexus_is_features
 
 A_CRUISE_MAX_VALS = [1.6, 1.2, 0.8, 0.6]
 A_CRUISE_MAX_BP = [0., 10.0, 25., 40.]
 J_CRUISE_VALS = [1.6, 1.2, 0.8, 0.6]
 A_CRUISE_MIN = -1.2
+# Lexus IS branch, shaped set-speed law (setting set_speed_law, sunnypilot/lexus_is/features.py): the acceleration toward
+# the set speed tapers with the speed error and aims just below it; a small overspeed is shed by coasting before any
+# braking request; rises are jerk-limited; a slow trim removes the steady error a grade leaves.
+J_CRUISE_VALS_SHAPED = [1.2, 1.0, 0.6, 0.5]  # m/s^3, at A_CRUISE_MAX_BP
+J_CRUISE_UNWIND_FACTOR = 2.0          # a positive cruise acceleration may decrease this much faster
+J_CRUISE_RELEASE = 3.0                # m/s^3: a negative cruise acceleration (started from a braking output) releases at this rate
+CRUISE_GAIN_BP = [5., 20.]            # m/s
+CRUISE_GAIN_V = [0.6, 0.3]            # m/s^2 per m/s of speed error below the set speed
+CRUISE_APPROACH_MARGIN = 0.1          # m/s: the approach aims this far below the set speed
+CRUISE_COAST_BAND = 0.42              # m/s (1.5 km/h) above the set speed: coasting only
+CRUISE_COAST_ACCEL = -0.05            # m/s^2: request at the top of the coast band
+CRUISE_OVER_GAIN = 0.3                # m/s^2 per m/s of overspeed beyond the coast band
+CRUISE_KI = 0.06                      # m/s^2 per (m/s * s): slow trim of the steady error (grades)
+CRUISE_I_MAX = 0.3                    # m/s^2: trim bound
+CRUISE_I_ZONE = 1.5                   # m/s: the trim integrates only within this speed error of the set speed
+CRUISE_I_LEAK_TC = 3.0                # s: otherwise the trim decays with this time constant
 CONTROL_N_T_IDX = ModelConstants.T_IDXS[:CONTROL_N]
 ALLOW_THROTTLE_THRESHOLD = 0.4
 MIN_ALLOW_THROTTLE_SPEED = 2.5
@@ -35,7 +52,27 @@ def get_max_accel(v_ego):
 def get_coast_accel(pitch):
   return np.sin(pitch) * -5.65 - 0.3  # fitted from data using xx/projects/allow_throttle/compute_coast_accel.py
 
-def get_cruise_accel(e2e, v_cruise, v_ego, a_cruise_prev, angle_steers, CP, dt, accel_coast, allow_throttle):
+def shaped_cruise_target(v_err, v_ego, max_accel):
+  if v_err > CRUISE_APPROACH_MARGIN:
+    k = float(np.interp(v_ego, CRUISE_GAIN_BP, CRUISE_GAIN_V))
+    return min(k * (v_err - CRUISE_APPROACH_MARGIN), max_accel)
+  if v_err > 0.:
+    return min(0., max_accel)
+  if v_err > -CRUISE_COAST_BAND:
+    return min(CRUISE_COAST_ACCEL * (-v_err / CRUISE_COAST_BAND), max_accel)
+  return min(max(CRUISE_COAST_ACCEL + CRUISE_OVER_GAIN * (v_err + CRUISE_COAST_BAND), A_CRUISE_MIN), max_accel)
+
+
+def shaped_cruise_accel(v_err, v_ego, max_accel, a_cruise_prev, dt, cruise_trim):
+  target_accel = min(max(shaped_cruise_target(v_err, v_ego, max_accel) + cruise_trim, A_CRUISE_MIN), max_accel)
+  j_cruise = float(np.interp(v_ego, A_CRUISE_MAX_BP, J_CRUISE_VALS_SHAPED))
+  j_down = j_cruise * (J_CRUISE_UNWIND_FACTOR if a_cruise_prev > 0. else 1.)
+  j_up = J_CRUISE_RELEASE if a_cruise_prev < 0. else j_cruise
+  return float(np.clip(target_accel, a_cruise_prev - j_down * dt, a_cruise_prev + j_up * dt))
+
+
+def get_cruise_accel(e2e, v_cruise, v_ego, a_cruise_prev, angle_steers, CP, dt, accel_coast, allow_throttle,
+                     cruise_trim=0., shaped=False):
   max_accel = ACCEL_MAX if e2e else get_max_accel(v_ego)
 
   if not e2e:
@@ -47,6 +84,9 @@ def get_cruise_accel(e2e, v_cruise, v_ego, a_cruise_prev, angle_steers, CP, dt, 
       clipped_accel_coast = max(accel_coast, ACCEL_MIN)
       coast_limit = np.interp(v_ego, [MIN_ALLOW_THROTTLE_SPEED, MIN_ALLOW_THROTTLE_SPEED*2], [max_accel, clipped_accel_coast])
       max_accel = min(max_accel, coast_limit)
+
+  if shaped:
+    return shaped_cruise_accel(v_cruise - v_ego, v_ego, max_accel, a_cruise_prev, dt, cruise_trim)
 
   target_accel = np.clip(v_cruise - v_ego, A_CRUISE_MIN, max_accel)
   j_cruise = np.interp(v_ego, A_CRUISE_MAX_BP, J_CRUISE_VALS)
@@ -66,6 +106,9 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
 
     self.v_desired_filter = FirstOrderFilter(init_v, 2.0, self.dt)
     self.a_cruise = init_a
+    self.shaped_cruise = lexus_is_features.enabled("set_speed_law")
+    self.cruise_trim = 0.0
+    self.prev_plan_source = None
     self.output_a_target = init_a
     self.output_should_stop = False
 
@@ -105,6 +148,7 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
       self.v_desired_filter.x = v_ego
       self.output_a_target = np.clip(sm['carState'].aEgo, ACCEL_MIN, ACCEL_MAX)
       self.a_cruise = self.output_a_target
+      self.cruise_trim = 0.0
 
     # Prevent divergence, smooth in current v_ego
     self.v_desired_filter.x = max(0.0, self.v_desired_filter.update(v_ego))
@@ -140,10 +184,27 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
 
     is_e2e = self.is_e2e(sm)
 
+    a_cruise_prev = self.a_cruise
+    if self.shaped_cruise:
+      # The cruise candidate is computed every cycle, also while another candidate is lower. Do not let it ramp up out
+      # of sight: start it no higher than the last output, so a mode switch or a departing lead cannot step the output
+      # up to a candidate that was hidden. From a braking output it releases at J_CRUISE_RELEASE instead of jumping.
+      a_cruise_prev = min(self.a_cruise, float(a_prev))
+      # Slow trim of the steady error (grades): integrates only while the cruise law was in control near the set speed.
+      v_err = v_cruise - v_ego
+      if (not reset_state) and self.prev_plan_source == LongitudinalPlanSource.cruise and abs(v_err) < CRUISE_I_ZONE:
+        self.cruise_trim = float(np.clip(self.cruise_trim + CRUISE_KI * (v_err - CRUISE_APPROACH_MARGIN) * self.dt,
+                                         -CRUISE_I_MAX, CRUISE_I_MAX))
+      else:
+        self.cruise_trim *= max(0., 1. - self.dt / CRUISE_I_LEAK_TC)
     self.a_cruise = get_cruise_accel(is_e2e, v_cruise, v_ego,
-                                     self.a_cruise, steer_angle_without_offset, self.CP, self.dt,
-                                     accel_coast, self.allow_throttle)
+                                     a_cruise_prev, steer_angle_without_offset, self.CP, self.dt,
+                                     accel_coast, self.allow_throttle, self.cruise_trim, self.shaped_cruise)
     cruise_should_stop = should_stop(v_ego, self.a_cruise)
+    if self.shaped_cruise and (v_cruise - v_ego) > CRUISE_APPROACH_MARGIN:
+      # started from the last output, the candidate sits near 0 for a cycle or two at a standstill: never ask to stop
+      # while the set speed is above the current speed
+      cruise_should_stop = False
 
     candidates = [(output_a_target_mpc, self.mpc.source, output_should_stop_mpc),
                   (self.a_cruise, LongitudinalPlanSource.cruise, cruise_should_stop)]
@@ -151,6 +212,7 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
       candidates.append((output_a_target_e2e, LongitudinalPlanSource.e2e, output_should_stop_e2e))
 
     output_a_target, self.mpc.source, _ = min(candidates, key=lambda c: c[0])
+    self.prev_plan_source = self.mpc.source
     self.output_should_stop = any(should_stop for _, _, should_stop in candidates)
     self.output_a_target = np.clip(output_a_target, ACCEL_MIN, ACCEL_MAX)
 
