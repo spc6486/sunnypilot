@@ -19,6 +19,7 @@ from opendbc.car.fw_versions import ObdCallback
 from opendbc.car.car_helpers import get_car, interfaces
 from opendbc.car.interfaces import CarInterfaceBase, RadarInterfaceBase
 from opendbc.car.toyota.values import ToyotaFlags
+from openpilot.sunnypilot.lexus_is import features as lexus_is_features
 from openpilot.selfdrive.pandad import can_capnp_to_list, can_list_to_can_capnp
 from openpilot.selfdrive.car.cruise import VCruiseHelper
 from openpilot.selfdrive.car.helpers import convert_carControlSP, convert_to_capnp
@@ -187,7 +188,7 @@ class Car:
     # 3 (close) -> aggressive, 2 (medium) -> standard, 1 (far) -> relaxed. 0 (constant-speed cruise mode) is
     # not a level; it is ignored and the last written value is held. Only active with openpilot longitudinal.
     self.fd_personality_sync = (self.CP.brand == "toyota" and bool(self.CP.flags & ToyotaFlags.UNSUPPORTED_DSU)
-                                and self.CP.openpilotLongitudinalControl)
+                                and self.CP.openpilotLongitudinalControl and lexus_is_features.enabled("fd_personality"))
     self.fd_personality_last = 0
 
     self.is_metric = self.params.get_bool("IsMetric")

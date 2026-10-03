@@ -9,7 +9,7 @@ from openpilot.cereal import log, custom
 
 from opendbc.car import structs
 from opendbc.car.hyundai.values import HyundaiFlags
-from opendbc.car.toyota.values import ToyotaFlags
+from opendbc.sunnypilot.car.toyota.values import ToyotaFlagsSP
 from openpilot.common.params import Params
 from openpilot.sunnypilot.mads.helpers import MadsSteeringModeOnBrake, read_steering_mode_param, MADS_NO_ACC_MAIN_BUTTON
 from openpilot.sunnypilot.mads.state import StateMachine, GEARS_ALLOW_PAUSED_SILENT
@@ -55,8 +55,9 @@ class ModularAssistiveDrivingSystem:
     # LKAS-button pause mode: the button pauses/resumes MADS instead of disabling/enabling it. MADS stays
     # "enabled" while paused, so the panda's MADS heartbeat keeps controls_allowed_lateral and no safety-side
     # button hook is needed to re-arm lateral on resume. Used on cars whose LKAS button the safety code does
-    # not observe (Toyota UNSUPPORTED_DSU: Lexus IS/RC 2017-19, LDA button wired to the DSU).
-    self.button_pause_mode = self.CP.brand == "toyota" and bool(self.CP.flags & ToyotaFlags.UNSUPPORTED_DSU)
+    # not observe (Toyota UNSUPPORTED_DSU: Lexus IS/RC 2017-19, LDA button wired to the DSU). opendbc sets
+    # ToyotaFlagsSP.LDA_MADS on those cars unless the Lexus IS setting lda_mads turns it off.
+    self.button_pause_mode = self.CP.brand == "toyota" and bool(self.CP_SP.flags & ToyotaFlagsSP.LDA_MADS)
     self.user_paused = False
 
     # read params on init

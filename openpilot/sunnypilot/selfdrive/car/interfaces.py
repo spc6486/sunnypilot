@@ -12,6 +12,7 @@ from openpilot.common.params import Params
 from openpilot.common.swaglog import cloudlog
 from openpilot.sunnypilot.selfdrive.controls.lib.nnlc.helpers import get_nn_model_path
 from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit.helpers import set_speed_limit_assist_availability
+from openpilot.sunnypilot.lexus_is import features as lexus_is_features
 
 import openpilot.system.sentry as sentry
 
@@ -138,4 +139,5 @@ def initialize_params(params) -> list[dict[str, Any]]:
     "ToyotaStopAndGoHack",
   ])
 
-  return [{k: params.get(k, return_default=True)} for k in keys]
+  # Lexus IS branch: the car-side feature settings (sunnypilot/lexus_is/features.py), read from their own file
+  return [{k: params.get(k, return_default=True)} for k in keys] + lexus_is_features.opendbc_params_list()
