@@ -37,6 +37,8 @@ CRUISE_OVER_GAIN = 0.3                # m/s^2 per m/s of overspeed beyond the co
 CRUISE_KI = 0.06                      # m/s^2 per (m/s * s): slow trim of the steady error (grades)
 CRUISE_I_MAX = 0.3                    # m/s^2: trim bound
 CRUISE_I_ZONE = 1.5                   # m/s: the trim integrates only within this speed error of the set speed
+CRUISE_I_STEADY_A = 0.1               # m/s^2: ... and only while the car holds its speed (|aEgo| below this); it is held, not
+                                      # decayed, while the car accelerates or slows, so it cannot wind up on an approach
 CRUISE_I_LEAK_TC = 3.0                # s: otherwise the trim decays with this time constant
 CONTROL_N_T_IDX = ModelConstants.T_IDXS[:CONTROL_N]
 ALLOW_THROTTLE_THRESHOLD = 0.4
@@ -64,6 +66,9 @@ def shaped_cruise_target(v_err, v_ego, max_accel):
 
 
 def shaped_cruise_accel(v_err, v_ego, max_accel, a_cruise_prev, dt, cruise_trim):
+  if cruise_trim > 0. and v_err < 0.:
+    # above the set speed a positive (uphill) trim fades out across the coast band: it never pushes the speed through it
+    cruise_trim *= float(np.clip(1. + v_err / CRUISE_COAST_BAND, 0., 1.))
   target_accel = min(max(shaped_cruise_target(v_err, v_ego, max_accel) + cruise_trim, A_CRUISE_MIN), max_accel)
   j_cruise = float(np.interp(v_ego, A_CRUISE_MAX_BP, J_CRUISE_VALS_SHAPED))
   j_down = j_cruise * (J_CRUISE_UNWIND_FACTOR if a_cruise_prev > 0. else 1.)
@@ -190,12 +195,14 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
       # of sight: start it no higher than the last output, so a mode switch or a departing lead cannot step the output
       # up to a candidate that was hidden. From a braking output it releases at J_CRUISE_RELEASE instead of jumping.
       a_cruise_prev = min(self.a_cruise, float(a_prev))
-      # Slow trim of the steady error (grades): integrates only while the cruise law was in control near the set speed.
+      # Slow trim of the steady error (grades): integrates only while the cruise law is in control near the set speed and
+      # the car holds its speed; held while it accelerates or slows; decays when the cruise law is not in control.
       v_err = v_cruise - v_ego
-      if (not reset_state) and self.prev_plan_source == LongitudinalPlanSource.cruise and abs(v_err) < CRUISE_I_ZONE:
+      in_control = (not reset_state) and self.prev_plan_source == LongitudinalPlanSource.cruise and abs(v_err) < CRUISE_I_ZONE
+      if in_control and abs(sm['carState'].aEgo) < CRUISE_I_STEADY_A:
         self.cruise_trim = float(np.clip(self.cruise_trim + CRUISE_KI * (v_err - CRUISE_APPROACH_MARGIN) * self.dt,
                                          -CRUISE_I_MAX, CRUISE_I_MAX))
-      else:
+      elif not in_control:
         self.cruise_trim *= max(0., 1. - self.dt / CRUISE_I_LEAK_TC)
     self.a_cruise = get_cruise_accel(is_e2e, v_cruise, v_ego,
                                      a_cruise_prev, steer_angle_without_offset, self.CP, self.dt,

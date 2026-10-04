@@ -60,3 +60,16 @@ def test_trim_adds_and_is_bounded():
   assert shaped_cruise_accel(0.05, 20., 1., 0.2, DT_MDL, 0.2) == pytest.approx(0.2)
   assert shaped_cruise_target(-10., 20., 1.) + (-0.3) < A_CRUISE_MIN
   assert shaped_cruise_accel(-10., 20., 1., A_CRUISE_MIN, DT_MDL, -0.3) == A_CRUISE_MIN
+
+
+def test_positive_trim_fades_above_the_set_speed():
+  # a positive (uphill) trim adds fully at or below the set speed, fades across the coast band, and is gone beyond it
+  def hold(v_err, trim):
+    return shaped_cruise_accel(v_err, 25., 1., 0., 1e3, trim)  # large dt: no rate limit
+  assert hold(0., 0.3) == pytest.approx(shaped_cruise_target(0., 25., 1.) + 0.3)
+  half = -CRUISE_COAST_BAND / 2
+  assert hold(half, 0.3) == pytest.approx(shaped_cruise_target(half, 25., 1.) + 0.15)
+  assert hold(-CRUISE_COAST_BAND, 0.3) == pytest.approx(shaped_cruise_target(-CRUISE_COAST_BAND, 25., 1.))
+  assert hold(-1., 0.3) == pytest.approx(shaped_cruise_target(-1., 25., 1.))
+  # a negative (downhill) trim is not faded above the set speed
+  assert hold(-1., -0.2) == pytest.approx(shaped_cruise_target(-1., 25., 1.) - 0.2)
