@@ -10,6 +10,7 @@ from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.realtime import Ratekeeper
 from openpilot.common.utils import retry
 from openpilot.common.swaglog import cloudlog
+from openpilot.sunnypilot.lexus_is.boot_recovery import log_failures, mark_soundd_ready  # Lexus IS branch
 
 from openpilot.system import micd
 from openpilot.common.hardware import HARDWARE
@@ -169,6 +170,7 @@ class Soundd(QuietMode):
     return math.pow(VOLUME_BASE, (np.clip(volume, MIN_VOLUME, MAX_VOLUME) - 1))
 
   @retry(attempts=10, delay=3)
+  @log_failures("soundd")  # Lexus IS branch
   def get_stream(self, sd):
     # reload sounddevice to reinitialize portaudio
     sd._terminate()
@@ -186,6 +188,7 @@ class Soundd(QuietMode):
       rk = Ratekeeper(20)
 
       cloudlog.info(f"soundd stream started: {stream.samplerate=} {stream.channels=} {stream.dtype=} {stream.device=}, {stream.blocksize=}")
+      mark_soundd_ready()  # Lexus IS branch: lets selfdrived allow engagement
       while True:
         sm.update(0)
 

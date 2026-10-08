@@ -6,13 +6,17 @@ branch updates. The file is read once per process; a change takes effect at the 
 defaults to on (the branch's behaviour before the settings existed), so a missing, unreadable or partial file changes
 nothing. Example (any subset of the keys):
 
-  {"set_speed_law": true, "fd_personality": true, "lda_mads": true, "rsa": true, "enhanced_bsm": false}
+  {"set_speed_law": true, "fd_personality": true, "lda_mads": true, "rsa": true, "enhanced_bsm": false,
+   "boot_recovery": true, "audio_ready_gate": true}
 
   set_speed_law   shaped set-speed law in the longitudinal planner (selfdrive/controls/lib/longitudinal_planner.py)
   fd_personality  the factory follow-distance selector sets the longitudinal personality (selfdrive/car/card.py)
   lda_mads        the LDA button pauses/resumes MADS; the cluster LKA indicator follows MADS (opendbc toyota mads.py)
   rsa             speed-limit sign on the cluster from the navigation limit (opendbc toyota rsa.py)
   enhanced_bsm    blind-spot status polled from the blind spot monitor sensors (opendbc toyota bsm.py)
+  boot_recovery   restart micd / soundd / qcomgpsd after a crash, log why the audio stream did not open, retry the
+                  modem diag port (sunnypilot/lexus_is/boot_recovery.py)
+  audio_ready_gate  no engagement until soundd has its audio stream open (selfdrive/selfdrived/selfdrived.py)
 
 The car-side features (lda_mads, rsa, enhanced_bsm) reach opendbc through the params list card.py passes to get_car
 (sunnypilot/selfdrive/car/interfaces.py initialize_params -> opendbc setup_interfaces), where a feature that is off is
@@ -31,6 +35,8 @@ DEFAULTS: dict[str, bool] = {
   "lda_mads": True,
   "rsa": True,
   "enhanced_bsm": True,
+  "boot_recovery": True,
+  "audio_ready_gate": True,
 }
 
 # the names opendbc's setup_interfaces reads for the car-side features (sunnypilot/car/interfaces.py, _initialize_toyota)

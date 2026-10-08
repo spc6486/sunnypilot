@@ -7,6 +7,7 @@ from openpilot.cereal import messaging
 from openpilot.common.realtime import Ratekeeper
 from openpilot.common.utils import retry
 from openpilot.common.swaglog import cloudlog
+from openpilot.sunnypilot.lexus_is.boot_recovery import log_failures  # Lexus IS branch
 
 RATE = 10
 FFT_SAMPLES = 1600 # 100ms
@@ -103,6 +104,7 @@ class Mic:
         self.measurements = self.measurements[FFT_SAMPLES:]
 
   @retry(attempts=10, delay=3)
+  @log_failures("micd")  # Lexus IS branch
   def get_stream(self, sd):
     # reload sounddevice to reinitialize portaudio
     sd._terminate()

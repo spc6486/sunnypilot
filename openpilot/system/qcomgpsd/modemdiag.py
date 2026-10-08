@@ -2,6 +2,7 @@ import select
 from struct import pack, unpack_from, calcsize
 
 from openpilot.common.serial import Serial
+from openpilot.sunnypilot.lexus_is.boot_recovery import retry_open  # Lexus IS branch
 
 
 def _gen_crc16_reflected_table(poly: int) -> list[int]:
@@ -31,6 +32,7 @@ class ModemDiag:
     self.serial = self.open_serial()
     self.pend = b''
 
+  @retry_open("qcomgpsd")  # Lexus IS branch: EACCES on /dev/ttyUSB0 right after the modem came up (routes 37e, 380)
   def open_serial(self):
     serial = Serial("/dev/ttyUSB0", baudrate=115200, rtscts=True, dsrdtr=True, timeout=0, exclusive=True)
     serial.flush()

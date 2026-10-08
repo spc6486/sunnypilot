@@ -16,6 +16,7 @@ import openpilot.system.sentry as sentry
 from openpilot.common.basedir import BASEDIR
 from openpilot.common.params import Params
 from openpilot.common.swaglog import cloudlog
+from openpilot.sunnypilot.lexus_is.boot_recovery import RESTARTER  # Lexus IS branch
 
 
 def launcher(proc: str, name: str) -> None:
@@ -233,6 +234,9 @@ def ensure_running(procs: ValuesView[ManagerProcess], started: bool, params: Par
       running.append(p)
     else:
       p.stop(block=False)
+      RESTARTER.forget(p.name)  # Lexus IS branch
+
+  RESTARTER.update(running)  # Lexus IS branch: clears proc of a crashed micd/soundd/qcomgpsd so start() relaunches it
 
   for p in running:
     p.start()

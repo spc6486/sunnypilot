@@ -33,6 +33,7 @@ from openpilot.sunnypilot.selfdrive.car.cruise_helpers import CruiseHelper
 from openpilot.sunnypilot.selfdrive.car.intelligent_cruise_button_management.controller import IntelligentCruiseButtonManagement
 from openpilot.sunnypilot.selfdrive.selfdrived.button_state_tracker import ButtonStateTracker
 from openpilot.sunnypilot.selfdrive.selfdrived.events import EventsSP
+from openpilot.sunnypilot.lexus_is.boot_recovery import AudioReadyGate  # Lexus IS branch
 
 REPLAY = "REPLAY" in os.environ
 SIMULATION = "SIMULATION" in os.environ
@@ -155,6 +156,7 @@ class SelfdriveD(CruiseHelper):
     self.rk = Ratekeeper(100, print_delay_threshold=None)
 
     self.ignored_processes = {'mapd', }
+    self.audio_ready_gate = AudioReadyGate()  # Lexus IS branch
 
     # Determine startup event
     is_remote = build_metadata.openpilot.comma_remote or build_metadata.openpilot.sunnypilot_remote
@@ -233,6 +235,13 @@ class SelfdriveD(CruiseHelper):
     if not self.initialized:
       self.events.add(EventName.selfdriveInitializing)
       return
+
+    # Lexus IS branch: no engagement (NO_ENTRY only) while soundd runs without an open audio stream. Evaluated on the
+    # first initialized frame too, from the last managerState received.
+    if self.sm.updated['managerState'] or (not self.audio_ready_gate.evaluated and self.sm.recv_frame['managerState'] > 0):
+      self.audio_ready_gate.update(self.sm['managerState'])
+    if self.audio_ready_gate.blocking:
+      self.events.add(EventName.carNotReady)
 
     # Check for user bookmark press
     if self.sm.updated['userBookmark']:
