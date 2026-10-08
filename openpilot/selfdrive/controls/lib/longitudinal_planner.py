@@ -40,6 +40,7 @@ CRUISE_I_ZONE = 1.5                   # m/s: the trim integrates only within thi
 CRUISE_I_STEADY_A = 0.1               # m/s^2: ... and only while the car holds its speed (|aEgo| below this); it is held, not
                                       # decayed, while the car accelerates or slows, so it cannot wind up on an approach
 CRUISE_I_LEAK_TC = 3.0                # s: otherwise the trim decays with this time constant
+CRUISE_TRIM_LOG_EVERY = 20            # planner cycles (1 s at 20 Hz): the trim is logged to cloudlog at this interval
 CONTROL_N_T_IDX = ModelConstants.T_IDXS[:CONTROL_N]
 ALLOW_THROTTLE_THRESHOLD = 0.4
 MIN_ALLOW_THROTTLE_SPEED = 2.5
@@ -114,6 +115,7 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
     self.shaped_cruise = lexus_is_features.enabled("set_speed_law")
     self.cruise_trim = 0.0
     self.prev_plan_source = None
+    self.cruise_trim_log_frame = 0
     self.output_a_target = init_a
     self.output_should_stop = False
 
@@ -204,6 +206,11 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
                                          -CRUISE_I_MAX, CRUISE_I_MAX))
       elif not in_control:
         self.cruise_trim *= max(0., 1. - self.dt / CRUISE_I_LEAK_TC)
+      # the trim is not in longitudinalPlan: a 1 Hz record of it and the conditions it integrates under
+      self.cruise_trim_log_frame += 1
+      if self.cruise_trim_log_frame % CRUISE_TRIM_LOG_EVERY == 0:
+        cloudlog.event("lexus_is_cruise_trim", trim=round(self.cruise_trim, 4), v_err=round(float(v_err), 3),
+                       a_ego=round(float(sm['carState'].aEgo), 3), in_control=bool(in_control))
     self.a_cruise = get_cruise_accel(is_e2e, v_cruise, v_ego,
                                      a_cruise_prev, steer_angle_without_offset, self.CP, self.dt,
                                      accel_coast, self.allow_throttle, self.cruise_trim, self.shaped_cruise)
